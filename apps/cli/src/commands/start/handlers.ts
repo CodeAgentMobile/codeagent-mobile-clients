@@ -1948,13 +1948,13 @@ async function runDetectOneShot(
   }
 }
 
-/** Who/what a preview event is tagged with. Only `agent` is ever written to
- *  the wire, so every button-driven event stays byte-identical. */
-function originPayload(
+/** Who/what a preview event is tagged with. `user` is never written to the
+ *  wire (absent = user), so every button-driven event stays byte-identical. */
+export function originPayload(
   payload: Record<string, unknown> | undefined,
   origin: PreviewOrigin | undefined,
 ): Record<string, unknown> | undefined {
-  if (origin !== 'agent') return payload;
+  if (origin === undefined || origin === 'user') return payload;
   return { ...(payload ?? {}), origin };
 }
 
@@ -2322,8 +2322,11 @@ export async function restorePreviewAfterRestart(
     'preview',
     `restoring the preview that was serving before the restart (${detection.framework})`,
   );
+  // `auto`, never `user`: nobody tapped anything. Tagged `user`, a wake that
+  // recreated the CLI read as the user starting previews while the app was in
+  // the background or on the paywall (codeagent-pe0f, 2026-10-07/11).
   void (deps.start ?? startPreviewFromDetection)(ctx, detection, pluginAuthToken, {
-    origin: 'user',
+    origin: 'auto',
   });
   return true;
 }
@@ -2465,7 +2468,10 @@ export function maybeAttachBuildHeal(ctx: PreviewCtx, pluginAuthToken: string): 
         // 150 ms so the port is fully released before the fresh spawn binds
         // it — same grace period `previewRestartH` waits below.
         await new Promise((r) => setTimeout(r, 150));
-        void self.startPreviewFromDetection(ctx, preview.detection, pluginAuthToken);
+        // The CLI restarts it on its own — `auto`, not the user's start.
+        void self.startPreviewFromDetection(ctx, preview.detection, pluginAuthToken, {
+          origin: 'auto',
+        });
       })();
     },
     notify: (message) => {

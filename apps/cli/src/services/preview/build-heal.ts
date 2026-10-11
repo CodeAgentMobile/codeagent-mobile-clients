@@ -199,6 +199,12 @@ export function watchForBuildClobber(deps: BuildHealDeps): BuildHealWatcher {
     if (stopped) return;
     const current = readMarker(markerPath);
     if (current === lastKnownMarker) return; // stale/coalesced event — no real change
+    // A BUILD_ID that VANISHED is not a build: `next build` always leaves one
+    // behind. Restarting on the deletion killed a healthy preview (likely the
+    // 2026-10-07 restart 1.5 s after ready, codeagent-pe0f — unverifiable on
+    // the user's box, but a deletion can never mean a build). The baseline is
+    // kept, so a real build that deletes then rewrites still restarts ONCE.
+    if (current === null) return;
     lastKnownMarker = current;
     const count = (healRestartCounts.get(deps.sessionId) ?? 0) + 1;
     healRestartCounts.set(deps.sessionId, count);
