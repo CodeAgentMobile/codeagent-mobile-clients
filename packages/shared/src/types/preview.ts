@@ -109,9 +109,12 @@ export interface MissingService {
  * Who started a preview. `agent` = the session's agent called the
  * `start_preview` MCP tool: the app skips the confirm sheet (the agent already
  * chose), shows the "Initializing Preview…" card in the chat and switches to
- * the preview plane once it is ready. Absent = `user` (the Preview button).
+ * the preview plane once it is ready. `auto` = the CLI brought it back by
+ * itself (the restore after a restart/wake, a build-heal restart) — never a
+ * tap, so the backend must not count it, or refund it, as the user's. Absent =
+ * `user` (the Preview button).
  */
-export type PreviewOrigin = 'user' | 'agent';
+export type PreviewOrigin = 'user' | 'agent' | 'auto';
 
 /**
  * `preview_agent_highlight` — the agent pointing at an element of the running

@@ -56,11 +56,13 @@ describe('preview active marker', () => {
 describe('restorePreviewAfterRestart', () => {
   const ctx = { sessionId: 's1', pluginId: 'p1' };
 
-  it('starts the marked preview through the normal pipeline, as a user-origin preview', async () => {
+  // `auto`, never `user`: a wake/self-update restart is not a tap
+  // (codeagent-pe0f — it read as the user starting previews from the paywall).
+  it('starts the marked preview through the normal pipeline, as an auto-origin preview', async () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const ok = await restorePreviewAfterRestart(ctx, 'tok', { read: async () => detection, start });
     expect(ok).toBe(true);
-    expect(start).toHaveBeenCalledWith(ctx, detection, 'tok', { origin: 'user' });
+    expect(start).toHaveBeenCalledWith(ctx, detection, 'tok', { origin: 'auto' });
   });
 
   it('does nothing without a marker', async () => {

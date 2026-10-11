@@ -105,7 +105,7 @@ describe('maybeAttachBuildHeal wiring', () => {
     await sleep(2_200); // 1.5s debounce + fs event + restart-IIFE margin
 
     expect(kill).toHaveBeenCalledWith('sess-heal-1');
-    expect(respawn).toHaveBeenCalledWith(ctx, det, 'tok');
+    expect(respawn).toHaveBeenCalledWith(ctx, det, 'tok', { origin: 'auto' });
     expect(mockPostPreviewEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'sess-heal-1',

@@ -95,6 +95,39 @@ describe('watchForBuildClobber — real fs sequence', () => {
     expect(restart).not.toHaveBeenCalled();
   });
 
+  // A vanished BUILD_ID is not a build (`next build` always leaves one) —
+  // restarting on the deletion killed a healthy preview (codeagent-pe0f).
+  it('never restarts when BUILD_ID is DELETED (a deletion is never a build)', async () => {
+    const restart = vi.fn();
+    const notify = vi.fn();
+    const watcher = watchForBuildClobber({ cwd: dir, sessionId, restart, notify, debounceMs: 30 });
+    try {
+      await sleep(100);
+      await fsp.rm(path.join(dir, '.next', 'BUILD_ID'));
+      await sleep(400);
+      expect(restart).not.toHaveBeenCalled();
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      watcher.stop();
+    }
+  });
+
+  it('a build that deletes then rewrites BUILD_ID still restarts exactly once', async () => {
+    const restart = vi.fn();
+    const notify = vi.fn();
+    const watcher = watchForBuildClobber({ cwd: dir, sessionId, restart, notify, debounceMs: 30 });
+    try {
+      await sleep(100);
+      await fsp.rm(path.join(dir, '.next', 'BUILD_ID'));
+      await sleep(300); // the deletion's debounce fires and is ignored
+      await fsp.writeFile(path.join(dir, '.next', 'BUILD_ID'), 'prod-build-id');
+      await sleep(400);
+      expect(restart).toHaveBeenCalledTimes(1);
+    } finally {
+      watcher.stop();
+    }
+  });
+
   it('debounces a burst of writes into a single restart', async () => {
     const restart = vi.fn();
     const notify = vi.fn();
