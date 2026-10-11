@@ -58,7 +58,19 @@ describe('runPreviewTool', () => {
   it('a pipeline error comes back as a tool error with its stage', async () => {
     const call = vi.fn().mockResolvedValue({ status: 'error', stage: 'spawn', message: 'EADDRINUSE' });
     const r = await runPreviewTool('start_preview', {}, call);
-    expect(r).toEqual({ text: 'Preview failed at spawn: EADDRINUSE', isError: true });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('Preview failed at spawn: EADDRINUSE');
+    // codeagent-pe0f: the agent once shared a link for a failed spawn.
+    expect(r.text).toMatch(/NOT running.*do not give the user a preview link/);
+    expect(r.text).not.toMatch(/https?:\/\//);
+  });
+
+  it('"still starting" tells the agent there is no link yet', async () => {
+    const call = vi.fn().mockResolvedValue({ status: 'starting', message: 'Still coming up.' });
+    const r = await runPreviewTool('start_preview', {}, call);
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain('Still coming up.');
+    expect(r.text).toMatch(/no link to give the user/);
   });
 
   it('clear_highlights posts {clear:true} to the highlight route', async () => {

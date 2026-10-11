@@ -66,6 +66,18 @@ export interface AgentDetectionOverride {
  */
 export const START_WAIT_MS = 240_000;
 
+/**
+ * Agent-driven restarts (a `stop_preview`, or a `start_preview` with a
+ * different command over a running one) allowed per session in
+ * {@link AGENT_RESTART_WINDOW_MS}. On 2026-10-04 an agent stopped and
+ * restarted a healthy Vite preview 6 times in 6 min (14:28–14:34, a `ready`
+ * after every start) — the user's screen flickered for nothing: dev servers
+ * hot-reload, a code change never needs a restart. Past the cap the agent is
+ * told so instead of the preview being torn down again.
+ */
+export const MAX_AGENT_RESTARTS = 3;
+export const AGENT_RESTART_WINDOW_MS = 10 * 60_000;
+
 const MAX_SELECTOR = 500;
 const MAX_LABEL = 80;
 
@@ -78,6 +90,13 @@ export class AgentPreviewBridge {
   private inflight: Promise<AgentPreviewResult> | null = null;
   private lastError: { stage: string; message: string } | null = null;
   private bound: { url: string; token: string } | null = null;
+  /** When the agent tore the preview down, per session (see MAX_AGENT_RESTARTS). */
+  private readonly restarts = new Map<string, number[]>();
+  private readonly now: () => number;
+
+  constructor(opts: { now?: () => number } = {}) {
+    this.now = opts.now ?? Date.now;
+  }
 
   /** Start the loopback server once. `null` when it could not bind — the
    *  preview tools are then simply absent, never a failed session. */
@@ -225,6 +244,7 @@ export class AgentPreviewBridge {
     const ctx = this.ctx;
     if (!ctx?.pluginAuthToken) return { ok: false, message: 'The session is still starting.' };
     if (!activePreviews.has(ctx.sessionId)) return { ok: true, message: 'No preview was running.' };
+    if (!this.takeRestart(ctx.sessionId)) return { ok: false, message: RESTART_CAPPED_MESSAGE };
     await killPreview(ctx.sessionId);
     resetBuildHealState(ctx.sessionId);
     await postPreviewEvent({
@@ -253,7 +273,17 @@ export class AgentPreviewBridge {
     override?: AgentDetectionOverride,
   ): Promise<AgentPreviewResult> {
     this.lastError = null;
-    const already = serving(ctx.sessionId);
+    let already = serving(ctx.sessionId);
+    const wanted = override && detectionFromOverride(override);
+    if (already && wanted && !sameCommand(already.detection, wanted)) {
+      // A DIFFERENT dev command over a running preview is the one case a
+      // restart is real. Anything else reuses what is already serving.
+      if (!this.takeRestart(ctx.sessionId)) {
+        return { status: 'error', stage: 'restart_limit', message: RESTART_CAPPED_MESSAGE };
+      }
+      await killPreview(ctx.sessionId);
+      already = null;
+    }
     if (already) {
       // Still announce it: the app switches to the preview plane and the
       // chat card resolves, exactly as for a fresh start.
@@ -311,6 +341,22 @@ export class AgentPreviewBridge {
     return { status: 'error', ...err };
   }
 
+  /** Records one agent-driven teardown; false once the window's cap is spent. */
+  private takeRestart(sessionId: string): boolean {
+    const now = this.now();
+    const recent = (this.restarts.get(sessionId) ?? []).filter(
+      (t) => now - t < AGENT_RESTART_WINDOW_MS,
+    );
+    if (recent.length >= MAX_AGENT_RESTARTS) {
+      this.restarts.set(sessionId, recent);
+      log.info('agent-preview', `restart cap reached for session=${sessionId}`);
+      return false;
+    }
+    recent.push(now);
+    this.restarts.set(sessionId, recent);
+    return true;
+  }
+
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const reply = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json' });
@@ -358,6 +404,19 @@ function running(
     ...(reused ? { reused: true } : {}),
     inspector: Boolean(active.inspector),
   };
+}
+
+const RESTART_CAPPED_MESSAGE =
+  `The preview was already restarted ${MAX_AGENT_RESTARTS} times in the last ` +
+  `${AGENT_RESTART_WINDOW_MS / 60_000} minutes, so it stays as it is. Dev servers hot-reload: your code ` +
+  'changes show up without a restart. If it is genuinely broken, tell the user what you saw.';
+
+function sameCommand(a: PreviewDetection, b: PreviewDetection): boolean {
+  return (
+    a.command === b.command &&
+    a.port === b.port &&
+    JSON.stringify(a.args ?? []) === JSON.stringify(b.args ?? [])
+  );
 }
 
 function detectionFromOverride(o: AgentDetectionOverride): PreviewDetection | null {
