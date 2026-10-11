@@ -359,14 +359,14 @@ describe('FileWatcherService', () => {
     vi.spyOn(_gitSeam, 'run').mockResolvedValue(SAMPLE_DIFF);
     const postSpy = vi.spyOn(_transport, 'post')
       .mockResolvedValueOnce({ statusCode: 500, body: 'oops' })
-      .mockResolvedValueOnce({ statusCode: 200, body: '{}' });
+      // Every later call (the retry and the /review/* chain) succeeds. A
+      // `…Once` here let the chain fall through to the real transport.
+      .mockResolvedValue({ statusCode: 200, body: '{}' });
 
     svc._scheduleForTest(path.join(WORKING_DIR, 'a.ts'), 'change');
     // Debounce (250 ms) + retry backoff on the /files/changed call
-    // (300 ms) + slack for the follow-up /review/hunks chain (whose
-    // mock is exhausted, so it also burns through MAX_RETRIES + 2
-    // backoffs). 3500 ms drains everything so the test doesn't leak
-    // a pending Promise into the next test's spy.
+    // (300 ms) + the follow-up /review/* chain. 3500 ms drains everything
+    // so the test doesn't leak a pending Promise into the next test's spy.
     await vi.advanceTimersByTimeAsync(3500);
     await vi.runAllTicks();
 

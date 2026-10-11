@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { startBeads, handleBeadsActionCommand } from '../../src/beads';
 import * as adapterMod from '../../src/beads/bd-adapter';
 import * as provisionerMod from '../../src/beads/provisioner';
 import * as watcherMod from '../../src/beads/watcher';
 import * as applyMod from '../../src/beads/apply-actions';
+import { _transport as fileWatcherTransport } from '../../src/services/file-watcher/transport';
 
 const baseOpts = {
   sessionId: 's1',
@@ -11,6 +12,12 @@ const baseOpts = {
   pluginAuthToken: 't1',
   cwd: '/repo',
 };
+
+// startBeads pulls team memories through the file-watcher transport; offline
+// here, never against PRODUCTION (fixtures/prod-api-guard.ts).
+beforeEach(() => {
+  vi.spyOn(fileWatcherTransport, 'post').mockRejectedValue(new Error('offline in tests'));
+});
 
 describe('startBeads — composition-root orchestrator', () => {
   afterEach(() => vi.restoreAllMocks());

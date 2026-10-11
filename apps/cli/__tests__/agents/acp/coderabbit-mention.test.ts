@@ -31,6 +31,7 @@ import * as pairing from '../../../src/services/pairing.service';
 import * as coderabbitConfigure from '../../../src/agents/coderabbit/configure';
 import type { RemoteCommand, SquadRosterData } from '@codeam/shared';
 import type { CoderabbitConfigureResult } from '../../../src/agents/coderabbit/configure';
+import { _transport as pairingTransport } from '../../../src/services/pairing.service';
 
 let homeDir: string;
 
@@ -133,6 +134,13 @@ function stubReviewer(markdown: string): ReturnType<typeof vi.spyOn> {
 }
 
 // ─── pure helpers ───────────────────────────────────────────────────────────
+
+// The handlers report turn events / pull the project env through the real
+// pairing transport; offline here, as before, but never against PRODUCTION
+// (fixtures/prod-api-guard.ts, codeagent-fndr audit).
+beforeEach(() => {
+  vi.spyOn(pairingTransport, 'postJsonAuthed').mockRejectedValue(new Error('offline in tests'));
+});
 
 describe('hasCustomInstructions', () => {
   it('is false for a bare mention (with or without the literal token)', () => {

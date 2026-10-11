@@ -30,6 +30,26 @@
  * - The returned stop function cancels both branches.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// The subscriber opens a real SSE request on subscribe. These stories drive
+// it through the test seam, so the stream is a request that never answers;
+// without this every run opened /api/commands/pending/stream on PRODUCTION.
+const { idleRequest } = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { EventEmitter } = require('node:events') as typeof import('node:events');
+  return {
+    idleRequest: () =>
+      Object.assign(new EventEmitter(), { end: () => undefined, destroy: () => undefined }),
+  };
+});
+vi.mock('node:https', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:https')>()),
+  request: vi.fn(idleRequest),
+}));
+vi.mock('node:http', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:http')>()),
+  request: vi.fn(idleRequest),
+}));
 import {
   subscribeToPairCompletion,
   _pairCompletionTestSeam,
