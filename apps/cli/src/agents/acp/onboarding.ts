@@ -124,8 +124,10 @@ export function resolveRepoName(cwd: string): string {
  * The hardcoded welcome message, published verbatim as the agent's first
  * turn. Static on purpose — it's purely informational, so there's no reason to
  * spend an agent round-trip generating it (which added latency and, worse,
- * sometimes never landed). Mobile-friendly markdown; the full https:// URLs
- * render as tappable links. Lightly tailored with the repo name.
+ * sometimes never landed). Mobile-friendly markdown, lightly tailored with the
+ * repo name. It stays English: it is published at pair time, before the app
+ * has sent the device locale (`start_task.locale`); from the first task on, the
+ * agent answers in the user's language (`reply-language.ts`).
  */
 export function buildOnboardingWelcome(cwd: string): string {
   const repo = resolveRepoName(cwd);
@@ -137,14 +139,11 @@ export function buildOnboardingWelcome(cwd: string): string {
     '- **Smart Composer** — help crafting and structuring your prompts.',
     '- **Team Spaces** — share this session with your team, or hand it off to someone else.',
     '',
-    'Found a bug or have feedback? Reach us at:',
-    // EXPLICIT markdown links, not bare URLs. Relying on the app's autolinker
-    // rendered the GitHub bullet as an EMPTY link (the label was consumed, the
-    // href never attached) — a labelled link renders correctly everywhere and
-    // reads better than a raw URL on a phone-width bubble.
-    '- [GitHub issues](https://github.com/edgar-durand/codeagent-mobile-clients/issues)',
-    '- [Discord community](https://discord.gg/Np2pbMrV9f)',
-    '',
+    // ⚠️ No support links here. The first message a new user reads is the
+    // invitation to start; "Found a bug? GitHub issues / Discord" pointed a
+    // non-developer at a developer bug tracker before they had sent a single
+    // task (replay 2026-10-04, PRO user in Malaysia, bead codeagent-sak0).
+    // Help lives in the app (Profile › Help → FAQ + Contact support).
     `Ready when you are — try **"explain ${repo}"** or **"what should I work on first?"**`,
   ].join('\n');
 }
