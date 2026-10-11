@@ -4,6 +4,21 @@ All notable changes to `codeam-cli` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.22] — 2026-10-11
+
+### Fixed
+
+- **cli:** Tag CLI-driven preview starts origin 'auto', not 'user'
+- **cli:** Send sessionId to preview/tunnel so named tunnels stop 401ing (codeagent-fndr)
+- **cli:** Agent preview tools answer only what is serving; cap agent restarts
+- **cli:** Drop support links from the first-pair welcome message
+
+### Tests
+
+- **cli:** Fail any spec whose fetch reaches a real host (#942)
+- **cli:** Extend the prod-api guard to node http/https and stop 7 specs calling prod
+- **cli:** Pin one clock and sparse-size files in logger-retention spec
+
 ## [2.76.21] — 2026-10-10
 
 ### Fixed
