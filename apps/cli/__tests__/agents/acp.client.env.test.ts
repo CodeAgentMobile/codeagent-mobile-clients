@@ -100,3 +100,30 @@ describe('AcpClient — the agent gets an MCP startup budget that fits our shim'
     expect(opts.env.MCP_TIMEOUT).toBe('45000');
   });
 });
+
+// codeagent-pe0f: the preview tunnel's credentials are the CLI's. With the
+// hostname in its env an agent told the user "here is the link" for a preview
+// that had failed to spawn; the token is a live cloudflared secret.
+describe('AcpClient — preview tunnel credentials never reach the agent', () => {
+  beforeEach(() => spawnMock.mockClear());
+
+  it('withholds PREVIEW_TUNNEL_TOKEN / PREVIEW_TUNNEL_HOSTNAME from the spawn env', () => {
+    const saved = { t: process.env.PREVIEW_TUNNEL_TOKEN, h: process.env.PREVIEW_TUNNEL_HOSTNAME };
+    process.env.PREVIEW_TUNNEL_TOKEN = 'cf-secret';
+    process.env.PREVIEW_TUNNEL_HOSTNAME = 'preview-abc.preview.codeagent-mobile.com';
+    try {
+      const c = makeClient({ PREVIEW_TUNNEL_HOSTNAME: 'preview-x.example' });
+      void c.start().catch(() => undefined);
+      const opts = spawnMock.mock.calls[0][2];
+      expect(opts.env.PREVIEW_TUNNEL_TOKEN).toBeUndefined();
+      expect(opts.env.PREVIEW_TUNNEL_HOSTNAME).toBeUndefined();
+      // The CLI keeps them for its own tunnel.
+      expect(process.env.PREVIEW_TUNNEL_TOKEN).toBe('cf-secret');
+    } finally {
+      if (saved.t === undefined) delete process.env.PREVIEW_TUNNEL_TOKEN;
+      else process.env.PREVIEW_TUNNEL_TOKEN = saved.t;
+      if (saved.h === undefined) delete process.env.PREVIEW_TUNNEL_HOSTNAME;
+      else process.env.PREVIEW_TUNNEL_HOSTNAME = saved.h;
+    }
+  });
+});

@@ -243,6 +243,9 @@ const NEWSESSION_TIMEOUT_MS = 120_000;
  */
 export const MCP_STARTUP_TIMEOUT_MS = NEWSESSION_TIMEOUT_MS - 30_000;
 
+/** Env the CLI keeps for itself and never hands the agent (see the spawn). */
+export const AGENT_ENV_WITHHELD = ['PREVIEW_TUNNEL_TOKEN', 'PREVIEW_TUNNEL_HOSTNAME'] as const;
+
 /**
  * Backstop ceiling for `session/load`. It was the ONE handshake RPC with no
  * timeout, and a wedged adapter simply never answered: the 2026-08-18 baton
@@ -581,6 +584,12 @@ export class AcpClient {
       ...(this.opts.extraEnv ?? {}),
       PATH: augmentedPath,
     };
+    // The preview tunnel's credentials are the CLI's, never the agent's: the
+    // token is a live cloudflared secret, and with the hostname in its env an
+    // agent handed the user `https://preview-…` for a preview that had failed
+    // to spawn (2026-10-05). The agent's only door to the preview is the
+    // `codeagent_preview` tools, which answer from what is actually serving.
+    for (const key of AGENT_ENV_WITHHELD) delete childEnv[key];
     // Provider-routing attribution (codeagent-tvqt): the ONE line that says
     // which endpoint this agent will bill against — redacted to scheme+host,
     // from the MERGED env (an in-session house↔BYO switch rewrites extraEnv,

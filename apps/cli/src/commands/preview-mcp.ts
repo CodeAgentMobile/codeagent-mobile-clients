@@ -38,7 +38,9 @@ export const PREVIEW_TOOLS: ToolDef[] = [
       'it installs dependencies if needed, starts the dev server, publishes it on a public URL and switches the ' +
       "user's screen to it. Use it after you change anything visual (UI, styles, layout, copy) so you and the user " +
       'can check the result, or whenever the user asks to see the app. Returns the public URL (you can curl it) ' +
-      'or the exact error. Reuses a preview that is already running. Usually leave the arguments out: the ' +
+      'or the exact error. Only give the user a preview link when this tool says the preview is live — after an ' +
+      'error or a "still starting" answer there is NO working link. Reuses a preview that is already running ' +
+      '(code changes hot-reload; never stop and start it to refresh). Usually leave the arguments out: the ' +
       'project is detected automatically. Pass command/args/port only if you know the exact dev command.',
     inputSchema: {
       type: 'object',
@@ -82,7 +84,9 @@ export const PREVIEW_TOOLS: ToolDef[] = [
   },
   {
     name: 'stop_preview',
-    description: 'Stop the Preview (dev server + public URL). Only when the user asks, or to restart it cleanly.',
+    description:
+      'Stop the Preview (dev server + public URL). Only when the user asks. Never to apply code changes — the dev ' +
+      'server hot-reloads them; to run a different dev command, call start_preview with that command instead.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
 ];
@@ -158,12 +162,21 @@ function describeResult(raw: unknown): { text: string; isError: boolean } {
       };
     }
     case 'starting':
-      return { text: String(r.message ?? 'The preview is starting.'), isError: false };
+      return {
+        text:
+          `${String(r.message ?? 'The preview is starting.')} It is not serving yet, so there is no link to give ` +
+          'the user until preview_status says it is running.',
+        isError: false,
+      };
     case 'idle':
       return { text: 'No preview is running.', isError: false };
     case 'error':
       return {
-        text: `Preview failed at ${String(r.stage)}: ${String(r.message)}`,
+        // The agent once answered a failed spawn with "the preview is open, here
+        // is the link" (2026-10-05). Say plainly that nothing is serving.
+        text:
+          `Preview failed at ${String(r.stage)}: ${String(r.message)}. The preview is NOT running — do not give ` +
+          'the user a preview link; tell them what failed.',
         isError: true,
       };
     default:

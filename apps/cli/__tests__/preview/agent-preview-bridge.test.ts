@@ -27,7 +27,11 @@ vi.mock('../../src/commands/start/handlers', () => ({
 vi.mock('../../src/scratch/api', () => ({ postScratchOffer: mockScratchOffer }));
 
 import { activePreviews, type ActivePreview } from '../../src/services/preview';
-import { AgentPreviewBridge } from '../../src/commands/start/agent-preview-bridge';
+import {
+  AgentPreviewBridge,
+  AGENT_RESTART_WINDOW_MS,
+  MAX_AGENT_RESTARTS,
+} from '../../src/commands/start/agent-preview-bridge';
 import type { RuntimeStrategy } from '../../src/agents/strategy';
 
 const SESSION = 'sess-1';
@@ -193,6 +197,62 @@ describe('start_preview', () => {
     expect(posted('preview_ready')).toEqual([
       expect.objectContaining({ url: 'https://p.preview.codeagent-mobile.com', origin: 'agent' }),
     ]);
+  });
+});
+
+// codeagent-pe0f (2026-10-04 14:28–14:34): the agent stopped and restarted a
+// healthy Vite preview 6× in 6 min — a `ready` after every start, so each
+// cycle was a deliberate stop_preview + start_preview, not a failure.
+describe('agent-driven restarts', () => {
+  it('a different command over a running preview restarts it; the same command reuses it', async () => {
+    attach(bridge);
+    register();
+    mockStart.mockImplementation(async (_c, d: typeof DETECTION) => register({ detection: d }));
+
+    const same = await bridge.start({ command: 'npm', args: ['run', 'dev'], port: 3000 });
+    expect(same).toMatchObject({ status: 'running', reused: true });
+    expect(mockStart).not.toHaveBeenCalled();
+
+    const changed = await bridge.start({ command: 'npm', args: ['run', 'start'], port: 3000 });
+    expect(changed).toMatchObject({ status: 'running' });
+    expect(changed).not.toHaveProperty('reused');
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockStart.mock.calls[0][1]).toMatchObject({ args: ['run', 'start'] });
+  });
+
+  it(`caps stop_preview at ${MAX_AGENT_RESTARTS} per window and explains why`, async () => {
+    let now = 1_000_000;
+    bridge = new AgentPreviewBridge({ now: () => now });
+    attach(bridge);
+    for (let i = 0; i < MAX_AGENT_RESTARTS; i++) {
+      register();
+      expect(await bridge.stop()).toMatchObject({ ok: true, message: 'Preview stopped.' });
+    }
+    register();
+    const capped = await bridge.stop();
+    expect(capped.ok).toBe(false);
+    expect(capped.message).toMatch(/hot-reload/);
+    // The preview is left alone.
+    expect(activePreviews.has(SESSION)).toBe(true);
+    expect(posted('preview_stopped')).toHaveLength(MAX_AGENT_RESTARTS);
+
+    // The window slides: later on, a stop is allowed again.
+    now += AGENT_RESTART_WINDOW_MS;
+    expect(await bridge.stop()).toMatchObject({ ok: true });
+  });
+
+  it('a capped command change answers an error instead of tearing the preview down', async () => {
+    bridge = new AgentPreviewBridge({ now: () => 5 });
+    attach(bridge);
+    for (let i = 0; i < MAX_AGENT_RESTARTS; i++) {
+      register();
+      await bridge.stop();
+    }
+    register();
+    const r = await bridge.start({ command: 'pnpm', args: ['dev'], port: 3000 });
+    expect(r).toMatchObject({ status: 'error', stage: 'restart_limit' });
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(activePreviews.has(SESSION)).toBe(true);
   });
 });
 
