@@ -383,12 +383,16 @@ export async function postAiResult(input: {
  * back to a quick tunnel; see `services/preview/named-tunnel.ts`.
  */
 export async function fetchNamedPreviewTunnel(input: {
+  sessionId: string;
   pluginId: string;
   pluginAuthToken: string;
 }): Promise<{ hostname: string; token: string } | null> {
+  // The route is PluginAuthGuard-gated: the token is an HMAC over
+  // `sessionId:pluginId` and the guard reads BOTH from the body. Sending only
+  // `pluginId` 401'd every call until codeagent-fndr.
   const res = await _transport.postJsonAuthed(
     `${API_BASE}/api/preview/tunnel`,
-    { pluginId: input.pluginId },
+    { sessionId: input.sessionId, pluginId: input.pluginId },
     input.pluginAuthToken,
   );
   const body = res as { hostname?: unknown; token?: unknown } | null;

@@ -969,7 +969,7 @@ async function bringUpPublicUrl(ctx: StageCtx, tunnelPort: number): Promise<Publ
       pluginId: ctx.projectEnvAuth?.pluginId ?? '',
       pluginAuthToken: ctx.projectEnvAuth?.pluginAuthToken ?? '',
     },
-    (c) => fetchNamedPreviewTunnel({ pluginId: c.pluginId, pluginAuthToken: c.pluginAuthToken }),
+    fetchNamedPreviewTunnel,
   );
   const namedToken = named?.token;
   const namedHostname = named?.hostname;

@@ -70,7 +70,7 @@ function acquire(inst: Standalone): { baseUrl: string; release: () => void } {
 async function setupStandalone(ctx: ExportTunnelContext, rec: PendingSetup): Promise<Standalone> {
   const named = await resolveNamedTunnel(
     { sessionId: ctx.sessionId, pluginId: ctx.pluginId, pluginAuthToken: ctx.pluginAuthToken ?? '' },
-    (c) => fetchNamedPreviewTunnel({ pluginId: c.pluginId, pluginAuthToken: c.pluginAuthToken }),
+    fetchNamedPreviewTunnel,
   );
   if (!named || rec.cancelled) throw new Error('EXPORT_TUNNEL_UNAVAILABLE');
 
