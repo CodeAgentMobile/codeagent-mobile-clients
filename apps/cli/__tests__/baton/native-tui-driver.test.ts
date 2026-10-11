@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as os from 'node:os';
 import { NativeTuiDriver, type NativeTuiDriverDeps } from '../../src/baton/native-tui-driver';
 import type { AgentService } from '../../src/services/agent.service';
@@ -6,6 +6,7 @@ import type { RuntimeStrategy } from '../../src/agents/strategy';
 import type { CommandRelayService, RemoteCommand } from '../../src/services/command-relay.service';
 import { _transport as chunkTransport } from '../../src/services/output/chunk-emitter';
 import { createRuntimeStrategy } from '../../src/agents/registry';
+import { _transport as pairingTransport } from '../../src/services/pairing.service';
 
 function fakeAgent(id: string) {
   return {
@@ -39,6 +40,13 @@ function makeDeps(
   };
   return { deps, relay };
 }
+
+// The handlers report turn events / pull the project env through the real
+// pairing transport; offline here, as before, but never against PRODUCTION
+// (fixtures/prod-api-guard.ts, codeagent-fndr audit).
+beforeEach(() => {
+  vi.spyOn(pairingTransport, 'postJsonAuthed').mockRejectedValue(new Error('offline in tests'));
+});
 
 describe('NativeTuiDriver', () => {
   it('start(undefined) spawns fresh and returns the minted session id', async () => {

@@ -6,7 +6,7 @@
  * `payload.agentId` entirely — a routed task naming a DIFFERENT agent would
  * silently run on the wrong one instead of failing honestly.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { HandlerContext } from '../../../src/commands/start/handlers';
 
 vi.mock('child_process', () => ({
@@ -32,6 +32,7 @@ import type { RemoteCommand } from '../../../src/services/command-relay.service'
 import type { AgentService } from '../../../src/services/agent.service';
 import type { CommandRelayService } from '../../../src/services/command-relay.service';
 import type { OutputService } from '../../../src/services/output.service';
+import { _transport as pairingTransport } from '../../../src/services/pairing.service';
 
 function makeCmd(type: string, payload: Record<string, unknown> = {}): RemoteCommand {
   return { id: 'test-cmd-id', sessionId: 'sess-1', type, payload };
@@ -61,6 +62,13 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+// The handlers report turn events / pull the project env through the real
+// pairing transport; offline here, as before, but never against PRODUCTION
+// (fixtures/prod-api-guard.ts, codeagent-fndr audit).
+beforeEach(() => {
+  vi.spyOn(pairingTransport, 'postJsonAuthed').mockRejectedValue(new Error('offline in tests'));
 });
 
 describe('start_task handler — agent-identity guard', () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -7,6 +7,20 @@ import * as path from 'path';
 // resolves the projects-root via os.homedir() at projectDir-getter
 // time, but vi.mock takes effect at import. Using a module factory
 // keeps both the spied homedir and any other os exports available.
+// HistoryService uploads through its own https call with no seam. Point it at
+// a closed loopback port so an upload fails fast instead of reaching
+// PRODUCTION (fixtures/prod-api-guard.ts). API_BASE is read at import, so
+// this must run before the import below.
+const previousApiUrl = vi.hoisted(() => {
+  const prev = process.env.CODEAM_API_URL;
+  process.env.CODEAM_API_URL = 'http://127.0.0.1:9';
+  return prev;
+});
+afterAll(() => {
+  if (previousApiUrl === undefined) delete process.env.CODEAM_API_URL;
+  else process.env.CODEAM_API_URL = previousApiUrl;
+});
+
 vi.mock('os', async () => {
   const actual = await vi.importActual<typeof import('os')>('os');
   return {

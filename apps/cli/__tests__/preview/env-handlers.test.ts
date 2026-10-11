@@ -8,6 +8,7 @@ import * as handlersMod from '../../src/commands/start/handlers';
 import * as preview from '../../src/services/preview';
 import { activePreviews, registerPreview } from '../../src/services/preview';
 import type { PreviewDetection } from '@codeam/shared';
+import { _transport as pairingTransport } from '../../src/services/pairing.service';
 
 function makeCtx(sendResult = vi.fn()) {
   return {
@@ -27,6 +28,13 @@ beforeEach(async () => {
 afterEach(async () => {
   cwdSpy.mockRestore();
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+// The handlers report turn events / pull the project env through the real
+// pairing transport; offline here, as before, but never against PRODUCTION
+// (fixtures/prod-api-guard.ts, codeagent-fndr audit).
+beforeEach(() => {
+  vi.spyOn(pairingTransport, 'postJsonAuthed').mockRejectedValue(new Error('offline in tests'));
 });
 
 describe('env_read', () => {
