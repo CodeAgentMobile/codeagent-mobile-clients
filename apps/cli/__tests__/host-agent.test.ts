@@ -25,6 +25,7 @@ import { encodeCwd } from '../src/agents/claude/history';
 
 import {
   HostAgentSupervisor,
+  SELF_UPDATE_BOOT_QUIET_MS,
   SELF_UPDATE_DEFER_MAX_MS,
   SELF_UPDATE_STARTUP_DELAY_MS,
   resolveHostIdentity,
@@ -2728,6 +2729,58 @@ describe('HostAgentSupervisor — periodic self-update', () => {
         expect(onUpdated).toHaveBeenCalledWith('9.9.9');
       } finally {
         sup.stop();
+      }
+    });
+
+    /**
+     * codeagent-d3ia — fleet Box woken 07:36:45 on 2.76.15: the startup check
+     * installed 2.76.16 and restarted at 07:37:51 because the just-resumed
+     * session was not mid-turn, so the agent (~27 s) and the preview (new
+     * quick-tunnel URL) came up twice. While the boot's sessions are served the
+     * restart waits for the next idle tick (the next boot runs `current` anyway).
+     */
+    it('does NOT restart right after boot while it serves a session; the next idle tick does', async () => {
+      const cwdTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'codeam-su-boot-'));
+      const child = fakeChildWithStreams();
+      const selfUpdate = vi
+        .fn<() => Promise<SelfUpdateResult>>()
+        .mockResolvedValue({ status: 'updated', version: '9.9.9' });
+      const onUpdated = vi.fn();
+      const sup = new HostAgentSupervisor(IDENTITY, {
+        makeRelay: () => ({ start: vi.fn(), stop: vi.fn(), sendResult: vi.fn() }),
+        metricsCollector: {
+          collect: () => {
+            throw new Error('no metrics');
+          },
+          recordLatency: vi.fn(),
+        },
+        spawnChild: () => child,
+        resolveAgentAuth: vi.fn().mockResolvedValue({ kind: 'oauth_token', value: '{}' }),
+        selfUpdate,
+        onUpdated,
+        // Open but idle — exactly the freshly resumed session after a wake.
+        isChildMidTurn: () => false,
+      });
+      try {
+        sup.start();
+        await sup.handleCommand(deployCmd({ repoOrPath: cwdTarget }));
+        expect(sup.childCount()).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(SELF_UPDATE_STARTUP_DELAY_MS);
+        expect(selfUpdate).toHaveBeenCalledTimes(1);
+        expect(onUpdated).not.toHaveBeenCalled();
+
+        // Still nothing anywhere inside the quiet window.
+        await vi.advanceTimersByTimeAsync(SELF_UPDATE_BOOT_QUIET_MS - SELF_UPDATE_STARTUP_DELAY_MS - 1);
+        expect(onUpdated).not.toHaveBeenCalled();
+
+        // The hourly tick, session idle → restart onto the owed version.
+        await vi.advanceTimersByTimeAsync(60 * 60_000);
+        expect(onUpdated).toHaveBeenCalledTimes(1);
+        expect(onUpdated).toHaveBeenCalledWith('9.9.9');
+      } finally {
+        sup.stop();
+        fs.rmSync(cwdTarget, { recursive: true, force: true });
       }
     });
 

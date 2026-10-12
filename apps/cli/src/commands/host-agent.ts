@@ -153,6 +153,7 @@ import {
   currentCliVersion,
   runSelfUpdate,
   SELF_UPDATE_INTERVAL_MS,
+  SELF_UPDATE_BOOT_QUIET_MS,
   SELF_UPDATE_DEFER_MAX_MS,
   SELF_UPDATE_STARTUP_DELAY_MS,
   type SelfUpdater,
@@ -200,6 +201,7 @@ export {
 } from './host/os-packages';
 export {
   runSelfUpdate,
+  SELF_UPDATE_BOOT_QUIET_MS,
   SELF_UPDATE_DEFER_MAX_MS,
   SELF_UPDATE_STARTUP_DELAY_MS,
   type SelfUpdateResult,
@@ -755,6 +757,8 @@ export class HostAgentSupervisor {
   /** epoch ms when the CURRENT pending restart was first owed — the ceiling
    *  in {@link SELF_UPDATE_DEFER_MAX_MS} is measured from here. */
   private pendingRestartSince: number | null = null;
+  /** epoch ms of `start()`; null until then. See {@link SELF_UPDATE_BOOT_QUIET_MS}. */
+  private startedAt: number | null = null;
   /** Guards the one-shot 'connected' telemetry on the first heartbeat. */
   private reportedConnected = false;
   /** Live-metrics collector — stateful across beats (CPU delta + latency). */
@@ -847,6 +851,7 @@ export class HostAgentSupervisor {
 
   /** Open the control channel (reusing the relay) + start heartbeats. */
   start(): void {
+    this.startedAt = this.now();
     // Keep this box awake for the supervisor's WHOLE lifetime (covers its
     // child sessions too): self-hosted can be the user's OWN laptop, and the
     // per-session keepDeviceAwake() in start.ts is gated off for host-agent's
@@ -922,7 +927,9 @@ export class HostAgentSupervisor {
       // foreground on every wake (~42 s of a 57 s wake bootstrap, 2026-10-01).
       // Now the backend launches on what is installed and the supervisor
       // converges to latest in the background: the tick never blocks start(),
-      // pairing or deploys, and restarts only when no turn is in flight.
+      // pairing or deploys, and restarts only when no turn is in flight — and
+      // never inside the post-boot quiet window while it serves the sessions
+      // the wake just resumed (codeagent-d3ia, SELF_UPDATE_BOOT_QUIET_MS).
       this.selfUpdateStartupTimer = setTimeout(
         () => void this.selfUpdateTick(),
         SELF_UPDATE_STARTUP_DELAY_MS,
@@ -1142,6 +1149,18 @@ export class HostAgentSupervisor {
     // redeliver them (see `dispatchRelayCommand`). `runInFleetLane` retries the
     // restart the moment the last lane drains.
     const fleetBusy = this.fleetLanes.size > 0;
+    // Right after boot the sessions being served are the ones the wake just
+    // brought back: restarting now runs the whole cold start (agent, preview,
+    // tunnel) a second time. Waiting loses nothing — see
+    // SELF_UPDATE_BOOT_QUIET_MS (codeagent-d3ia).
+    if (this.justBootedWithSessions()) {
+      log.info(
+        'host-agent',
+        `self-update: ${version} installed but sessions resumed by this boot are being served — ` +
+          'deferring restart to the next idle tick (or the next boot)',
+      );
+      return false;
+    }
     if (midTurn || fleetBusy) {
       // ⚠️ `children` holds long-lived SESSION processes, not turns in flight
       // (a `ChildSession` carries no activity state at all), so on a paired
@@ -1166,6 +1185,17 @@ export class HostAgentSupervisor {
     }
     this.onUpdated(version);
     return true;
+  }
+
+  /** Inside the post-boot quiet window AND serving (or still resuming) a session. */
+  private justBootedWithSessions(): boolean {
+    if (this.startedAt === null) return false;
+    if (this.now() - this.startedAt >= SELF_UPDATE_BOOT_QUIET_MS) return false;
+    return (
+      this.children.size > 0 ||
+      this.pendingOrphanReplacements > 0 ||
+      [...this.resumeStates.values()].some((st) => st.timer !== null)
+    );
   }
 
   /** Number of live children — for tests + diagnostics. */
