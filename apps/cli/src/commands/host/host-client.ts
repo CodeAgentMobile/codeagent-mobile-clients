@@ -154,6 +154,19 @@ export interface SealedHostIdentity {
    * there → the control channel sends no header, exactly as before.
    */
   controlPollSecret?: string;
+  /**
+   * SHA-256 hex of the enroll token this box already spent (redeemed, or had
+   * terminally rejected). Fleet containers and `Restart=always` units keep the
+   * single-use token in their env forever, so every wake/restart replayed it
+   * and drew a 410 `ENROLL_TOKEN_EXPIRED` (codeagent-97ie). A token whose hash
+   * matches is skipped; a fresh token (re-enroll) never matches and redeems.
+   */
+  consumedEnrollTokenSha256?: string;
+}
+
+/** SHA-256 hex of an enroll token — what the sealed identity remembers. */
+export function enrollTokenHash(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
 }
 
 /** Shape of `POST /api/self-hosted/redeem`'s `data`. */
@@ -205,6 +218,9 @@ export function loadHostIdentity(): SealedHostIdentity | null {
         // Optional — absent on identities sealed by a pre-secret CLI.
         ...(typeof p.controlPollSecret === 'string'
           ? { controlPollSecret: p.controlPollSecret }
+          : {}),
+        ...(typeof p.consumedEnrollTokenSha256 === 'string'
+          ? { consumedEnrollTokenSha256: p.consumedEnrollTokenSha256 }
           : {}),
       };
     }

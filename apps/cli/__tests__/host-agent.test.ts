@@ -138,6 +138,8 @@ afterEach(() => {
   }
 });
 
+const sha256 = (v: string): string => createHash('sha256').update(v).digest('hex');
+
 const IDENTITY: SealedHostIdentity = {
   hostId: 'host-123',
   hostToken: 'tok-abc',
@@ -466,8 +468,9 @@ describe('resolveHostIdentity — redeem-first', () => {
     process.env.CODEAM_ENROLL_EPHEMERAL = '1';
     try {
       const resolved = await resolveHostIdentity('EXPIRED-BUT-EPHEMERAL');
-      expect(resolved).toEqual(IDENTITY);
-      expect(loadHostIdentity()).toEqual(IDENTITY);
+      const marked = { ...IDENTITY, consumedEnrollTokenSha256: sha256('EXPIRED-BUT-EPHEMERAL') };
+      expect(resolved).toEqual(marked);
+      expect(loadHostIdentity()).toEqual(marked);
     } finally {
       delete process.env.CODEAM_ENROLL_EPHEMERAL;
     }
@@ -499,8 +502,33 @@ describe('resolveHostIdentity — redeem-first', () => {
     delete process.env.CODEAM_ENROLL_EPHEMERAL;
 
     const resolved = await resolveHostIdentity('EXPIRED-TOKEN');
-    expect(resolved).toEqual(IDENTITY);
-    expect(loadHostIdentity()).toEqual(IDENTITY);
+    const marked = { ...IDENTITY, consumedEnrollTokenSha256: sha256('EXPIRED-TOKEN') };
+    expect(resolved).toEqual(marked);
+    expect(loadHostIdentity()).toEqual(marked);
+  });
+
+  it('skips the redeem entirely when the env token is the one this box already spent (wake/restart — codeagent-97ie)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const sealed = { ...IDENTITY, consumedEnrollTokenSha256: sha256('BAKED-TOKEN') };
+    fs.mkdirSync(path.dirname(hostIdentityPath()), { recursive: true });
+    fs.writeFileSync(hostIdentityPath(), JSON.stringify(sealed));
+
+    expect(await resolveHostIdentity('BAKED-TOKEN')).toEqual(sealed);
+    // No redeem (it could only 410) and no 'redeeming' progress report.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('remembers a successfully redeemed token so the next boot does not replay it', async () => {
+    const fresh = { hostId: 'host-NEW', hostToken: 'tok-NEW', controlPluginId: 'sh-plugin-NEW' };
+    vi.stubGlobal('fetch', redeemFetchMock(fresh));
+    const resolved = await resolveHostIdentity('FIRST-BOOT-TOKEN');
+    expect(resolved?.consumedEnrollTokenSha256).toBe(sha256('FIRST-BOOT-TOKEN'));
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await resolveHostIdentity('FIRST-BOOT-TOKEN')).toEqual(resolved);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('rethrows (transient) when redeem fails with 5xx AND there is no sealed identity', async () => {
@@ -613,8 +641,9 @@ describe('resolveHostIdentity — terminal enroll errors stop retrying', () => {
     fs.writeFileSync(hostIdentityPath(), JSON.stringify(IDENTITY));
 
     const resolved = await resolveHostIdentity('EXPIRED-TOKEN');
-    expect(resolved).toEqual(IDENTITY);
-    expect(loadHostIdentity()).toEqual(IDENTITY);
+    const marked = { ...IDENTITY, consumedEnrollTokenSha256: sha256('EXPIRED-TOKEN') };
+    expect(resolved).toEqual(marked);
+    expect(loadHostIdentity()).toEqual(marked);
   });
 
   it('throws a clear user-facing message on ENROLL_TOKEN_INVALID (400)', async () => {

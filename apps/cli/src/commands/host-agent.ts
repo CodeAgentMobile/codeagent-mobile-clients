@@ -85,6 +85,7 @@ import {
 } from './pair-auto';
 import {
   deleteHostIdentity,
+  enrollTokenHash,
   isHostAuthRejection,
   isTerminalEnrollError,
   loadHostIdentity,
@@ -3071,11 +3072,19 @@ export async function resolveHostIdentity(
   const existing = ensureControlPollSecret(loadHostIdentity());
 
   if (enrollToken) {
+    const tokenHash = enrollTokenHash(enrollToken);
+    // This exact token was already spent by this box: a wake/restart replaying
+    // the env var, not a re-enroll. Resume without a redeem that can only 410
+    // (codeagent-97ie) and without a misleading 'redeeming' progress report.
+    if (existing?.consumedEnrollTokenSha256 === tokenHash) return existing;
     // Box-side telemetry: report the redeem milestone before it lands
     // (enroll-token auth — host identity may be stale or absent). Best-effort.
     await reportProgress({ enrollToken }, 'redeeming', 'redeeming enrollment token…');
     try {
-      const identity = await redeemEnrollToken(enrollToken);
+      const identity = {
+        ...(await redeemEnrollToken(enrollToken)),
+        consumedEnrollTokenSha256: tokenHash,
+      };
       saveHostIdentity(identity);
       // Identity sealed — report enrolled (host-token auth now available).
       await reportProgress(
@@ -3113,7 +3122,12 @@ export async function resolveHostIdentity(
             'enroll token terminally rejected (expired/replayed) but a sealed identity is ' +
               'present; resuming from it — likely a restart, not a re-enroll',
           );
-          return existing;
+          // A terminally rejected token never becomes valid again — remember
+          // it so the next boot skips the redeem (identities sealed before
+          // consumedEnrollTokenSha256 existed converge here, once).
+          const resumed = { ...existing, consumedEnrollTokenSha256: tokenHash };
+          saveHostIdentity(resumed);
+          return resumed;
         }
         throw new Error(
           'Enrollment token expired or invalid — generate a new one in the app ' +
