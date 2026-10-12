@@ -346,16 +346,22 @@ jobs:
     # the dispatch event accepts a `client_payload` and works with
     # the same `repo` scope on the target's secret).
     #
-    # Non-blocking by design: this job uses `if: success()` on
-    # `publish-cli` but doesn't block the release flow's `release`
+    # Non-blocking by design: this job runs only once the version is
+    # live on npm but doesn't block the release flow's `release`
     # finalisation. A failed e2e shows up as a red dispatch run on
     # the api-v2 side and notifies the maintainer; we don't
     # un-publish the npm tag retroactively. The "fail loud" is the
     # GitHub UI surfacing the integration run as a Check.
+    #
+    # Gated on verify-published, NOT publish-cli: a finished `npm publish`
+    # is not a version the registry serves yet. v2.76.24 (2026-10-12) was
+    # dispatched 6 s after publish-cli, verify-published only saw the
+    # version 3.7 min later, and the e2e's `npm install` died ETARGET
+    # (codeagent-itqg). verify-published polls `npm view` for up to 7.5 min.
     name: Trigger api-v2 integration tests
-    needs: [setup, publish-cli]
+    needs: [setup, verify-published]
     runs-on: ubuntu-latest
-    if: ${{ needs.setup.outputs.is_prerelease != 'true' }}
+    if: ${{ needs.setup.outputs.is_prerelease != 'true' && needs.verify-published.result == 'success' }}
     permissions:
       contents: read
     steps:
