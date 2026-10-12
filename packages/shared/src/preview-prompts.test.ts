@@ -16,6 +16,14 @@ describe('PREVIEW_DETECT_PROMPT', () => {
     expect(PREVIEW_DETECT_PROMPT).toContain('Expo Go');
   });
 
+  // codeagent-hz3h: a FastAPI app in teleshop/ with its venv there had no way
+  // to be expressed — the spawn ran at the root and died ENOENT.
+  it('asks for the subfolder an app lives in, with paths relative to it', () => {
+    expect(PREVIEW_DETECT_PROMPT).toContain('"cwd"');
+    expect(PREVIEW_DETECT_PROMPT).toMatch(/subfolder/);
+    expect(PREVIEW_DETECT_PROMPT).toContain('".venv/bin/python", not "teleshop/.venv/bin/python"');
+  });
+
   it('instructs JSON-only output', () => {
     expect(PREVIEW_DETECT_PROMPT).toContain('OUTPUT JSON ONLY');
   });

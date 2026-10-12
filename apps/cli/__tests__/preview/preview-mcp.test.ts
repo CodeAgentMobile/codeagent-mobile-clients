@@ -65,6 +65,26 @@ describe('runPreviewTool', () => {
     expect(r.text).not.toMatch(/https?:\/\//);
   });
 
+  it('a dev server that could not even be spawned is NOT running and has no link (codeagent-hz3h)', async () => {
+    const call = vi.fn().mockResolvedValue({
+      status: 'error',
+      stage: 'spawn',
+      message: 'Couldn\'t start the dev server: ".venv/bin/python" was not found in the project root.',
+    });
+    const r = await runPreviewTool('start_preview', { command: '.venv/bin/python', port: 8000 }, call);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('was not found in the project root');
+    expect(r.text).toMatch(/NOT running.*do not give the user a preview link/);
+    expect(r.text).not.toMatch(/https?:\/\/|localhost/);
+  });
+
+  it('start_preview accepts a cwd and tells the agent a localhost link never opens on the phone', () => {
+    const tool = PREVIEW_TOOLS.find((t) => t.name === 'start_preview');
+    const props = (tool?.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(props).toHaveProperty('cwd');
+    expect(tool?.description).toMatch(/localhost/);
+  });
+
   it('"still starting" tells the agent there is no link yet', async () => {
     const call = vi.fn().mockResolvedValue({ status: 'starting', message: 'Still coming up.' });
     const r = await runPreviewTool('start_preview', {}, call);

@@ -13,13 +13,16 @@ Analyze the project in the current working directory and return how to start
 its development server for in-app preview.
 
 Read package.json, Procfile, Dockerfile, docker-compose.yml, manage.py, app.json,
-mix.exs, Cargo.toml, go.mod, requirements.txt, Gemfile, and any other framework
-markers you find at depth <= 2.
+mix.exs, Cargo.toml, go.mod, requirements.txt, pyproject.toml, Gemfile, and any
+other framework markers you find at depth <= 2. The app may live in a subfolder
+(e.g. teleshop/requirements.txt with nothing runnable at the root) — look there
+too.
 
 Return ONLY a JSON object on stdout (no prose, no markdown fences):
 
 {
   "framework": "<name, or 'unsupported'>",
+  "cwd": "<folder the dev server runs in, relative to the current directory; '.' for the root>",
   "command": "<executable>",
   "args": ["..."],
   "port": <number>,
@@ -31,6 +34,13 @@ Return ONLY a JSON object on stdout (no prose, no markdown fences):
 
 Rules:
 - Pick the script the developer would run locally to see the app (typically "dev", "start", "serve").
+- If the app lives in a subfolder, set "cwd" to that folder (e.g. "teleshop"). command,
+  args and setup_commands then run INSIDE it: write paths relative to it
+  (".venv/bin/python", not "teleshop/.venv/bin/python"), and never wrap the command
+  in "cd … &&" or "sh -c" — it is executed directly, without a shell.
+- Python: use the project's virtualenv interpreter when one exists
+  (".venv/bin/python" with args ["-m","uvicorn","main:app","--host","0.0.0.0","--port","8000"]),
+  otherwise "python3".
 - Prefer binding to 0.0.0.0 — most frameworks default to localhost which the tunnel cannot reach.
 - For Expo: framework="Expo", command="npx", args=["expo","start","--tunnel"], port=8081, notes="Scan QR with Expo Go".
 - If no dev server applies (CLI library, lambda, batch script): {"framework":"unsupported","notes":"<reason>"}.

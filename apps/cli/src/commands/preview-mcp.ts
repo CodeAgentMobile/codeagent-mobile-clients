@@ -39,7 +39,9 @@ export const PREVIEW_TOOLS: ToolDef[] = [
       "user's screen to it. Use it after you change anything visual (UI, styles, layout, copy) so you and the user " +
       'can check the result, or whenever the user asks to see the app. Returns the public URL (you can curl it) ' +
       'or the exact error. Only give the user a preview link when this tool says the preview is live — after an ' +
-      'error or a "still starting" answer there is NO working link. Reuses a preview that is already running ' +
+      'error or a "still starting" answer there is NO working link. The user is on their phone: a localhost / ' +
+      '127.0.0.1 address, or a server you started yourself in a shell, never opens for them — the URL this tool ' +
+      'returns is the only link to give. Reuses a preview that is already running ' +
       '(code changes hot-reload; never stop and start it to refresh). Usually leave the arguments out: the ' +
       'project is detected automatically. Pass command/args/port only if you know the exact dev command.',
     inputSchema: {
@@ -49,6 +51,13 @@ export const PREVIEW_TOOLS: ToolDef[] = [
         args: { type: 'array', items: { type: 'string' }, description: 'e.g. ["run","dev"]. Optional.' },
         port: { type: 'number', description: 'Port the dev server listens on. Required with command.' },
         framework: { type: 'string', description: 'Label shown to the user, e.g. "next". Optional.' },
+        cwd: {
+          type: 'string',
+          description:
+            'Folder the command runs in, relative to the project root, when the app lives in a subfolder ' +
+            '(e.g. "teleshop"). command/args are then relative to it (".venv/bin/python"). Never "cd … &&": ' +
+            'the command runs without a shell. Optional.',
+        },
       },
       additionalProperties: false,
     },

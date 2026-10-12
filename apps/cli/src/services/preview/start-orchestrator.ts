@@ -26,6 +26,7 @@ import { log } from '../logger';
 import { killQuiet } from '../../lib/quiet';
 import * as previewSvc from './index';
 import { writeActivePreviewMarker } from './active-marker';
+import { resolveDetectionCwd } from './detection-cwd';
 import { applyPreviewHostAllow } from './host-allow';
 import { restoreProjectEnvIfMissing } from '../project-env';
 import { resolveNamedTunnel } from './named-tunnel';
@@ -92,6 +93,13 @@ export interface PreviewStartArgs {
 
 /** Internal per-run context threaded through the stages. */
 interface StageCtx extends PreviewStartArgs {
+  /**
+   * The workspace root (`PreviewStartArgs.cwd` as the caller passed it). Inside
+   * the stages `cwd` is the APP's folder — the root joined with `detection.cwd`
+   * (codeagent-hz3h) — while the restore marker and the per-repo `.env` vault
+   * stay keyed by the root, where `codeam start` looks for them.
+   */
+  rootCwd: string;
   /**
    * Realtime milestone emitter — one per step the dev-server bring-up
    * traverses (ENV_DETECTED → SETUP_RUN → BOOT_SEQUENCE → BIND_PORT →
@@ -310,6 +318,7 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
   const { sessionId, detection, emit } = args;
   const ctx: StageCtx = {
     ...args,
+    rootCwd: args.cwd,
     emitProgress: (step, message) => {
       emit(USER_EVENTS.PREVIEW_PROGRESS, { step, message, timestamp: Date.now() });
     },
@@ -331,6 +340,16 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
     });
     return;
   }
+
+  // The app may live in a subfolder (`teleshop/` with its own `.venv`):
+  // every stage below runs there. Refuse a folder outside the workspace or
+  // one that is missing, with the reason, instead of a misleading ENOENT.
+  const appDir = resolveDetectionCwd(args.cwd, detection.cwd);
+  if (!appDir.ok) {
+    emit(USER_EVENTS.PREVIEW_ERROR, { stage: 'spawn', message: appDir.message });
+    return;
+  }
+  ctx.cwd = appDir.dir;
 
   emit(USER_EVENTS.PREVIEW_STARTING, {
     framework: detection.framework,
@@ -419,7 +438,7 @@ function announceReady(ctx: StageCtx, dev: DevServerUp, tun: TunnelUp): void {
   }
   log.info('preview', `ready: ${detection.framework} at ${tun.url}`);
   // Survives a Box sleep/restart: the next `codeam start` restores it.
-  void writeActivePreviewMarker(ctx.cwd, detection);
+  void writeActivePreviewMarker(ctx.rootCwd, detection);
   emit(USER_EVENTS.PREVIEW_READY, {
     url: tun.url,
     framework: detection.framework,
@@ -441,7 +460,7 @@ async function provisionDeps(ctx: StageCtx): Promise<boolean> {
   //     generates a fresh one). Never overwrites a `.env` already on disk. Only
   //     runs when the caller passed plugin auth. Best-effort — never blocks.
   if (ctx.projectEnvAuth?.pluginAuthToken) {
-    await restoreProjectEnvIfMissing(cwd, {
+    await restoreProjectEnvIfMissing(ctx.rootCwd, {
       sessionId: ctx.sessionId,
       pluginId: ctx.projectEnvAuth.pluginId,
       pluginAuthToken: ctx.projectEnvAuth.pluginAuthToken,
@@ -765,6 +784,13 @@ async function startDevServer(
     // groups — leave detached off there (direct kill is the only option).
     detached: process.platform !== 'win32',
   });
+  // Without a listener a failed exec (`spawn .venv/bin/python ENOENT`) is an
+  // uncaughtException, and the exit code it leaves (-2) read to the user as
+  // "may need a database" (codeagent-hz3h). Keep it to name the real cause.
+  let spawnError: NodeJS.ErrnoException | null = null;
+  devServer.on('error', (err: NodeJS.ErrnoException) => {
+    spawnError = err;
+  });
   emitProgress('BIND_PORT', String(detection.port));
   emitProgress('WAITING_FOR_READY', detection.ready_pattern);
   // Bounded tail of the dev server's stdout+stderr so a `preview_failed`
@@ -824,7 +850,9 @@ async function startDevServer(
     previewSvc.killProcessTree(devServer, 'SIGTERM');
     emit(USER_EVENTS.PREVIEW_ERROR, {
       stage: 'spawn',
-      message: `The dev server exited (code ${outcome.code}) before it was ready. It may need a database or other services.`,
+      message:
+        describeSpawnFailure(spawnError, spawnable.command, path.relative(ctx.rootCwd, cwd)) ??
+        `The dev server exited (code ${outcome.code}) before it was ready. It may need a database or other services.`,
       stderrTail: stripAnsi(outputTail).slice(-8000),
     });
     return null;
@@ -1037,4 +1065,28 @@ async function bringUpPublicUrl(ctx: StageCtx, tunnelPort: number): Promise<Publ
     };
   }
   return { ok: true, url: parsedUrl, tunnel };
+}
+
+/**
+ * The user-facing reason a dev server never started because its executable
+ * could not be run at all — null when the process did start (its own exit
+ * code and output tell the story then).
+ */
+export function describeSpawnFailure(
+  err: NodeJS.ErrnoException | null,
+  command: string,
+  relDir: string,
+): string | null {
+  if (!err) return null;
+  const where = relDir ? `the "${relDir}" folder` : 'the project root';
+  if (err.code === 'ENOENT') {
+    return (
+      `Couldn't start the dev server: "${command}" was not found in ${where}. ` +
+      'If the app lives in a subfolder, its "cwd" must point there; otherwise install the tool and try again.'
+    );
+  }
+  if (err.code === 'EACCES') {
+    return `Couldn't start the dev server: "${command}" in ${where} is not executable.`;
+  }
+  return `Couldn't start the dev server "${command}": ${err.message}`;
 }
