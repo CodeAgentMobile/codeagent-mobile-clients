@@ -18,6 +18,17 @@ export interface PreviewDetection {
   setup_commands?: Array<{ cmd: string; args: string[] }>;
   notes?: string;
   /**
+   * Project-relative directory the dev server (and `setup_commands`, and the
+   * Node deps pre-flight) runs in — for an app that lives in a subfolder of
+   * the workspace (`teleshop/` with its own `.venv`). Absent or `'.'` = the
+   * workspace root, the behaviour before this field existed. `command` paths
+   * like `.venv/bin/python` resolve against it. The CLI refuses a value that
+   * escapes the workspace or doesn't exist. Additive: older CLIs ignore it,
+   * and the apps carry it through untouched (the confirm sheet spreads the
+   * detection it was given).
+   */
+  cwd?: string;
+  /**
    * Every runnable dev-style script the CLI found in the repo (root + each
    * workspace app), so the confirm sheet can offer them in an autocomplete
    * next to the agent's pick. Additive: older clients ignore it, and the
