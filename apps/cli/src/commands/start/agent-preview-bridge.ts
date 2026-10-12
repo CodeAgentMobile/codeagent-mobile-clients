@@ -56,6 +56,8 @@ export interface AgentDetectionOverride {
   port: number;
   framework?: string;
   ready_pattern?: string;
+  /** Project-relative folder the command runs in (an app in a subfolder). */
+  cwd?: string;
 }
 
 /**
@@ -415,6 +417,7 @@ function sameCommand(a: PreviewDetection, b: PreviewDetection): boolean {
   return (
     a.command === b.command &&
     a.port === b.port &&
+    (a.cwd ?? '.') === (b.cwd ?? '.') &&
     JSON.stringify(a.args ?? []) === JSON.stringify(b.args ?? [])
   );
 }
@@ -428,6 +431,7 @@ function detectionFromOverride(o: AgentDetectionOverride): PreviewDetection | nu
     port: o.port,
     // Any Local/ready/listening line; the TCP probe is the real fallback.
     ready_pattern: o.ready_pattern?.trim() || '(ready|local:|listening|started server|compiled)',
+    ...(o.cwd?.trim() ? { cwd: o.cwd.trim() } : {}),
   };
 }
 
@@ -439,6 +443,7 @@ function overrideFrom(body: Record<string, unknown>): AgentDetectionOverride | u
     port: body.port,
     framework: typeof body.framework === 'string' ? body.framework : undefined,
     ready_pattern: typeof body.ready_pattern === 'string' ? body.ready_pattern : undefined,
+    cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
   };
 }
 

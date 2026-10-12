@@ -126,6 +126,27 @@ describe('start_preview', () => {
     expect(mockStart.mock.calls[0][1]).toMatchObject({ command: 'npm', args: ['start'], port: 8080 });
   });
 
+  it('an agent-supplied cwd rides the detection (app in a subfolder, codeagent-hz3h)', async () => {
+    attach(bridge);
+    mockStart.mockImplementation(async () => register());
+    await bridge.start({ command: '.venv/bin/python', args: ['-m', 'uvicorn', 'main:app'], port: 8000, cwd: 'teleshop' });
+    expect(mockStart.mock.calls[0][1]).toMatchObject({ command: '.venv/bin/python', cwd: 'teleshop' });
+  });
+
+  it('a spawn that never started is an error result, never a URL (codeagent-hz3h)', async () => {
+    attach(bridge);
+    mockStart.mockImplementation(async (_c, _d, _t, opts: { onEvent: (t: string, p: object) => void }) => {
+      opts.onEvent('preview_error', {
+        stage: 'spawn',
+        message: 'Couldn\'t start the dev server: ".venv/bin/python" was not found in the project root.',
+      });
+    });
+    const r = await bridge.start({ command: '.venv/bin/python', port: 8000 });
+    expect(r).toMatchObject({ status: 'error', stage: 'spawn' });
+    expect(r).not.toHaveProperty('url');
+    expect(bridge.status()).toEqual(r);
+  });
+
   it('returns the pipeline error verbatim', async () => {
     attach(bridge);
     mockResolve.mockResolvedValue(DETECTION);
