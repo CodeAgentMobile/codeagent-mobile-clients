@@ -58,6 +58,24 @@ export const SELF_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 export const SELF_UPDATE_STARTUP_DELAY_MS = 5_000;
 
 /**
+ * After the supervisor boots, a restart owed to an update is NOT taken while it
+ * serves sessions, however idle they look (codeagent-d3ia).
+ *
+ * WHY: the startup check above installs a release published while the box was
+ * asleep (~60 s of `npm install`), and the just-resumed session is not mid-turn
+ * yet, so the restart used to fire right then: a fleet Box woken 07:36:45 on
+ * 2.76.15 restarted 07:37:51 onto 2.76.16 — the session, its agent (~27 s) and
+ * its preview (a new quick-tunnel URL) all came up twice, cutting the user off
+ * just as they opened the session. Nothing is lost by waiting: the installed
+ * version stays `current`, so the next hourly idle tick restarts onto it, and
+ * the next boot (`superviseCurrent`) launches it directly with no restart.
+ *
+ * Must outlast the startup check's worst case (delay + view + install + verify
+ * ≈ 4 min) so that check can never restart a box that is serving sessions.
+ */
+export const SELF_UPDATE_BOOT_QUIET_MS = 10 * 60_000;
+
+/**
  * How long a restart owed to an installed update may be deferred because a
  * child session is running, before we restart regardless.
  *

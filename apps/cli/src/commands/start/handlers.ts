@@ -13,6 +13,7 @@ import {
 } from '../../services/command-relay.service';
 import type { HistoryService } from '../../services/history.service';
 import type { OutputService } from '../../services/output.service';
+import { withTurnMarker } from '../../services/turn-marker';
 import type { RuntimeStrategy } from '../../agents/strategy';
 import {
   parsePayload,
@@ -2398,17 +2399,23 @@ export function startPreviewFromDetection(
       void offerScratchSaveOnce(ctx, pluginAuthToken);
     }
   };
-  return runPreviewStart({
-    sessionId: ctx.sessionId,
-    detection,
-    cwd: process.cwd(),
-    emit,
-    // Auth for the per-repo `.env` vault restore, performed INSIDE the bring-up
-    // (provisionDeps stage, after the reuse short-circuit) so a fresh session of
-    // this repo picks up its saved `.env` before the dev server spawns. Optional
-    // — a caller without a token just skips the restore.
-    projectEnvAuth: { pluginId: ctx.pluginId, pluginAuthToken },
-  })
+  // A preview bring-up counts as busy for the host-agent's self-update
+  // restart, like a turn: a restart mid-bring-up kills the dev server + tunnel,
+  // and the re-restore on the next boot hands the app a NEW quick-tunnel URL
+  // (codeagent-d3ia).
+  return withTurnMarker(() =>
+    runPreviewStart({
+      sessionId: ctx.sessionId,
+      detection,
+      cwd: process.cwd(),
+      emit,
+      // Auth for the per-repo `.env` vault restore, performed INSIDE the bring-up
+      // (provisionDeps stage, after the reuse short-circuit) so a fresh session of
+      // this repo picks up its saved `.env` before the dev server spawns. Optional
+      // — a caller without a token just skips the restore.
+      projectEnvAuth: { pluginId: ctx.pluginId, pluginAuthToken },
+    }),
+  )
     .then(() => maybeAttachBuildHeal(ctx, pluginAuthToken))
     .catch((err) => {
       // Safety net: any UNEXPECTED throw in the detached bring-up (a malformed
