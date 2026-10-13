@@ -902,7 +902,7 @@ async function startTaskH(ctx: AcpCommandContext): Promise<void> {
   // budgetRecovery, so those are read from `ctx` AFTER the routing block below
   // (see {@link AcpSessionHandles}); destructuring them here would pin this
   // turn to the adapter the swap just stopped.
-  const { cmd, relay, streaming, opts, turnFiles, publisher, recentStderr } = ctx;
+  const { cmd, relay, streaming, opts } = ctx;
   const payload = cmd.payload as StartTaskPayload | undefined;
   reportTurn(ctx, 'received');
   // Agent Squad @-mention routing: the task carries the MENTIONED agent's id.
@@ -973,6 +973,26 @@ async function startTaskH(ctx: AcpCommandContext): Promise<void> {
   if (echoLine.length > 0) {
     showInfo(echoLine);
   }
+  // A message sent while another turn runs WAITS here, untouched: opening it
+  // now would publish `clear` + `new_turn` over the live turn and report it
+  // `started` long before the agent sees it (codeagent-u7mm).
+  if (streaming.turns.busy) {
+    log.info('acpRunner', `start_task queued behind the running turn id=${cmd.id.slice(0, 8)}`);
+  }
+  await streaming.turns.run(() => runStartTaskTurn(ctx, payload, blocks, promptText));
+}
+
+/**
+ * The turn itself: open it on the app, prompt the agent, close it. Runs inside
+ * {@link TurnQueue.run}, so it starts only once the previous turn fully closed.
+ */
+async function runStartTaskTurn(
+  ctx: AcpCommandContext,
+  payload: StartTaskPayload | undefined,
+  blocks: PromptBlock[],
+  promptText: string,
+): Promise<void> {
+  const { cmd, relay, streaming, opts, turnFiles, publisher, recentStderr } = ctx;
   // Mirror the legacy `outputSvc.newTurn()` boundary: clear the
   // previous reply on mobile + show "Agent is typing…". Without
   // this, mobile keeps showing the previous turn's bubble until

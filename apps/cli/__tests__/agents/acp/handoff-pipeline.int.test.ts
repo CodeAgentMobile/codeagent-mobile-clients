@@ -64,6 +64,7 @@ import { StreamingState } from '../../../src/agents/acp/runner';
 import { AcpPublisher } from '../../../src/agents/acp/publisher';
 import { SquadState } from '../../../src/agents/acp/squad-roster';
 import { HANDOFF_FENCE_TAG, type RemoteCommand, type SquadRosterData } from '@codeam/shared';
+import { TurnQueue } from '../../../src/agents/acp/turn-queue';
 
 const ROSTER: SquadRosterData = {
   agents: [
@@ -135,6 +136,7 @@ function makeCommandPipelineCtx(replyText: string, homeDir: string) {
   const relay = { sendResult: vi.fn(async () => undefined) };
   const streaming = {
     beginTurn: vi.fn(async () => undefined),
+    turns: new TurnQueue(),
     getCurrentText: vi.fn(() => replyText),
     hasVisibleProgress: vi.fn(() => false),
     closeTurnWithInteractiveDetection: vi.fn(async () => false),

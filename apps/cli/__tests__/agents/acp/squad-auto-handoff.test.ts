@@ -20,6 +20,7 @@ import { SquadState } from '../../../src/agents/acp/squad-roster';
 import { makeConfig } from '../../../src/config';
 import * as pairing from '../../../src/services/pairing.service';
 import type { RemoteCommand, SquadRosterData } from '@codeam/shared';
+import { TurnQueue } from '../../../src/agents/acp/turn-queue';
 
 let homeDir: string;
 
@@ -83,6 +84,7 @@ function makeCtx(over: Over = {}) {
   const clients = [client];
   const streaming = {
     beginTurn: vi.fn(async () => undefined),
+    turns: new TurnQueue(),
     getCurrentText: vi.fn(() => currentReply),
     hasVisibleProgress: vi.fn(() => false),
     closeTurnWithInteractiveDetection: vi.fn(async () => false),

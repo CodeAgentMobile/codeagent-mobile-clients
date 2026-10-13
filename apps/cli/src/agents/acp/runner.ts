@@ -128,6 +128,7 @@ import {
 } from './failure-messages';
 import { reportCredentialInvalid } from './backend-reports';
 import { agentHooks } from './agent-hooks';
+import { TurnQueue } from './turn-queue';
 import {
   readActiveConversationMarker,
   writeActiveConversationMarker,
@@ -402,6 +403,9 @@ export class StreamingState {
    * kinds that key purely off the adapter id.
    */
   private turnSeq = 0;
+
+  /** Runs this session's user turns one at a time (see {@link TurnQueue}). */
+  readonly turns = new TurnQueue();
 
   private readonly chatTextPublishIntervalMs: number;
 

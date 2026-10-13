@@ -26,6 +26,7 @@ import type { RemoteCommand, SquadRosterData } from '@codeam/shared';
 import { TurnFileAggregator } from '../../../src/services/turn-files/turn-file-aggregator';
 import * as gitChangeset from '../../../src/services/turn-files/git-changeset';
 import { _transport } from '../../../src/services/file-watcher/transport';
+import { TurnQueue } from '../../../src/agents/acp/turn-queue';
 
 let homeDir: string;
 
@@ -110,6 +111,7 @@ function makeCtx(over: CtxOverrides = {}) {
   };
   const streaming = {
     beginTurn: vi.fn(async () => undefined),
+    turns: new TurnQueue(),
     getCurrentText: vi.fn(() => replyText),
     hasVisibleProgress: vi.fn(() => false),
     closeTurnWithInteractiveDetection: vi.fn(async () => false),

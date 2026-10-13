@@ -15,6 +15,7 @@ import {
 } from '../../../src/agents/acp/command-handlers';
 import { agentPreviewBridge } from '../../../src/commands/start/agent-preview-bridge';
 import type { RemoteCommand } from '@codeam/shared';
+import { TurnQueue } from '../../../src/agents/acp/turn-queue';
 
 function startTask(payload: Record<string, unknown>, id = 'cmd-1'): RemoteCommand {
   return {
@@ -47,6 +48,7 @@ function makeCtx(over: CtxOverrides = {}) {
   const bubbles: string[] = [];
   const streaming = {
     beginTurn: vi.fn(async () => undefined),
+    turns: new TurnQueue(),
     getCurrentText: vi.fn(() => over.replyText ?? ''),
     hasVisibleProgress: vi.fn(() => over.hasVisibleProgress ?? false),
     closeTurnWithInteractiveDetection: vi.fn(async () => false),

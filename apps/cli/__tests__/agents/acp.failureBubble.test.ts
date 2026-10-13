@@ -40,6 +40,7 @@ import {
   replyIsHouseAgentLimit,
   houseAgentLimitMessage,
 } from '../../src/agents/acp/runner';
+import { IDLE_TURN_FAILURE_MESSAGE } from '../../src/agents/acp/failure-messages';
 
 describe('emptyReplyMessage — the honest bubble for a silently-empty end_turn', () => {
   it('names the agent + its binary for a known agent (kimi)', () => {
@@ -173,6 +174,17 @@ describe('failureBubble — every failed start_task ends with a visible terminal
         agent: 'claude',
       }),
     ).toBe(TURN_FAILURE_MESSAGE);
+  });
+
+  it('idle watchdog, nothing streamed → says the agent went silent, not that it errored (u7mm)', () => {
+    expect(
+      failureBubble({
+        detail: 'ACP prompt idle — adapter sent no updates for the idle window (90s / 600s).',
+        recentStderr: '',
+        hadText: false,
+        agent: 'opencode',
+      }),
+    ).toBe(IDLE_TURN_FAILURE_MESSAGE);
   });
 
   it('NON-auth failure that DID stream partial text → null (closeAll already published the partial reply)', () => {
