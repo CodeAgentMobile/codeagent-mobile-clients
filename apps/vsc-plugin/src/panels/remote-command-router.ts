@@ -15,6 +15,7 @@ import { AgentOutputMonitor } from '../services/agent-output-monitor';
 import { Messages } from '../ui/messages';
 import { buildInstallAndRun as buildInstallAndRunPure } from '../utils/build-install-command';
 import { normalizeCliAgentId } from '../utils/cli-agent-id';
+import { isDispatchableAgent } from '../utils/agent-dispatchable';
 
 function buildInstallAndRun(subcommand: string): string {
   return buildInstallAndRunPure(
@@ -147,9 +148,14 @@ export class RemoteCommandRouter {
         // the first installed non-terminal entry.
         ide.detectInstalledAgents()
           .then((agents) => {
+            // No agent named: prefer one this extension can actually deliver
+            // to (Copilot) over the first detected extension, which would only
+            // get the prompt on the clipboard (codeagent-vzbd).
             const target = agentId
               ? agents.find((a) => a.id === agentId)
-              : agents.find((a) => !a.isTerminalAgent) ?? agents[0];
+              : agents.find((a) => isDispatchableAgent(a)) ??
+                agents.find((a) => !a.isTerminalAgent) ??
+                agents[0];
 
             if (target?.isTerminalAgent) {
               const terminalResult: StrategyResult = {
@@ -161,7 +167,8 @@ export class RemoteCommandRouter {
 
             const invocation: AgentInvocation = {
               agent: target,
-              agentId,
+              // Strategies match on the id, so a defaulted target must carry its own.
+              agentId: agentId ?? target?.id,
               prompt,
               sessionId,
               commandId: command.id,

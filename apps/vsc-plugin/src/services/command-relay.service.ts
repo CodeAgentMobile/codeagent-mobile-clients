@@ -13,6 +13,7 @@ import { OutputChannel } from 'vscode';
 import { capture } from './telemetry.service';
 import { Messages } from '../ui/messages';
 import { StreamHostSelector, type StreamHostFailure } from './stream-base-url';
+import { isDispatchableAgent } from '../utils/agent-dispatchable';
 
 // The command-envelope shape now lives in @codeam/shared
 // (protocol/remote-command.ts) next to its zod schema; re-export it so
@@ -455,6 +456,8 @@ export class CommandRelayService {
         ...(typeof a.isTerminalAgent === 'boolean'
           ? { isTerminal: a.isTerminalAgent }
           : {}),
+        // The apps offer only what this extension can deliver to.
+        dispatchable: isDispatchableAgent(a),
       })),
     };
     this.postJson(`${settings.apiBaseUrl}/api/plugin/agents`, payload)
