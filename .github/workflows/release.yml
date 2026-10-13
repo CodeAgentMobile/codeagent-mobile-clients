@@ -232,10 +232,15 @@ jobs:
   # Depends on publish-cli: the image does `npm install -g codeam-cli@<version>`,
   # so that version must already be live on npm (under `next` — an exact
   # version installs whatever its dist-tag).
+  #
+  # Gated on verify-published (up to 7.5 min of registry replica lag), not just
+  # publish-cli: v2.76.29's first attempt died here because the 200 s wait below
+  # ran out before npm served the version — same race as codeagent-itqg — and a
+  # failed image build also holds the release gate.
   publish-box:
     name: Build and publish CodeAgent Box image
-    needs: [setup, publish-cli]
-    if: needs.setup.outputs.is_prerelease != 'true'
+    needs: [setup, publish-cli, verify-published]
+    if: always() && needs.setup.outputs.is_prerelease != 'true' && needs.publish-cli.result == 'success' && needs.verify-published.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
