@@ -11,11 +11,31 @@ on:
 # artifacts attached. Pre-release tags (vX.Y.Z-rc.N) skip the JetBrains
 # marketplace push.
 #
-# Topology: `setup` runs first to validate the tag and expose the version
-# as a job output, then `publish-cli` / `publish-vsc` / `publish-jetbrains`
-# fan out in parallel. The final `release` job waits for all three, prepends
-# git-cliff notes to each app's CHANGELOG.md, and creates the GitHub Release
-# with every artifact attached.
+# ── RELEASE GATE (codeagent-nczt.6) ──────────────────────────────────────────
+# Nothing reaches users until the journey canary passes on THIS version:
+#
+#   publish-cli / publish-shared  → npm dist-tag `next` (never `latest`)
+#   publish-box                   → ghcr codeam-box:<version> (never `:latest`)
+#   gate                          → `next` := <version> (npm + image), dispatch
+#                                   codeagent-mobile journey-canary.yml against
+#                                   DEV (its fleet host runs `:next` — env
+#                                   CODEAM_FLEET_BOX_TAG=next) and wait; the
+#                                   canary requires the Box session to report
+#                                   this exact version.
+#     green → `latest` := <version> (npm + image) → prebuild refresh, VS Code,
+#             JetBrains, GitHub Release, changelog.
+#     red   → `latest` never moves, `next` goes back to `latest`, Discord alert.
+#
+# Why `latest` is the thing to protect: every Box/host self-updates hourly from
+# npm `latest` (host/self-update.ts), new Boxes and the codespace prebuild boot
+# `codeam-box:latest`, and codespaces install `codeam-cli@latest`.
+#
+# Break-glass: repo variable CLI_RELEASE_GATE=bypass skips the canary (the
+# promotion still runs and says so). Delete the variable afterwards.
+#
+# Topology: `setup` validates the tag; `publish-cli` / `publish-shared` fan out
+# in parallel; `publish-box` builds the image; `gate` promotes; the IDE
+# plugins and the `release` job wait for the gate.
 
 permissions:
   contents: read
@@ -115,7 +135,8 @@ jobs:
             echo "::notice::@codeam/shared@$VERSION already published — skipping npm publish"
             exit 0
           fi
-          npm publish --access public
+          # `next`, never `latest`: the `gate` job promotes it with the CLI.
+          npm publish --access public --tag next
 
   publish-cli:
     name: Publish CLI to npm
@@ -190,7 +211,10 @@ jobs:
             echo "::notice::codeam-cli@$VERSION already published — skipping npm publish"
             exit 0
           fi
-          npm publish --access public
+          # ⚠️ `next`, NEVER `latest` (npm's default). `latest` is what every
+          # Box/host self-updates to within the hour; only the `gate` job moves
+          # it, after the journey canary passed on this version.
+          npm publish --access public --tag next
 
       - name: Upload CLI tarball artifact
         uses: actions/upload-artifact@v7
@@ -206,7 +230,8 @@ jobs:
   # with the release, so a rescued user never boots on a stale runtime.
   #
   # Depends on publish-cli: the image does `npm install -g codeam-cli@<version>`,
-  # so that version must already be live on npm.
+  # so that version must already be live on npm (under `next` — an exact
+  # version installs whatever its dist-tag).
   publish-box:
     name: Build and publish CodeAgent Box image
     needs: [setup, publish-cli]
@@ -235,6 +260,9 @@ jobs:
           echo "::error::codeam-cli@${VERSION} never appeared on npm — cannot build the box image against it"
           exit 1
 
+      # Only the version tag. `:next` / `:latest` are moved by the `gate` job
+      # with `imagetools create` (a manifest copy, no rebuild), so the image the
+      # canary walked is byte-for-byte the one prod boxes get.
       - name: Build and push box image (node 22 base, pinned CLI)
         env:
           VERSION: ${{ needs.setup.outputs.version }}
@@ -243,11 +271,160 @@ jobs:
           docker build \
             --build-arg "CODEAM_CLI_VERSION=${VERSION}" \
             -t "${IMAGE}:${VERSION}" \
-            -t "${IMAGE}:latest" \
             apps/box
           docker push "${IMAGE}:${VERSION}"
-          docker push "${IMAGE}:latest"
 
+
+  # ── The release gate: next → journey canary on dev → latest ─────────────
+  # ONE job (and one concurrency group across tags) so arming `next`, the
+  # canary and the promotion/rollback of two tags in flight can't interleave.
+  # Re-running it is safe: it re-arms `next` to this version first.
+  gate:
+    name: 'Release gate: next → journey canary (dev) → latest'
+    needs: [setup, publish-box, verify-published]
+    if: needs.setup.outputs.is_prerelease != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    concurrency:
+      group: clients-release-gate
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.setup.outputs.version }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/codeam-box
+      CANARY_REPO: edgar-durand/codeagent-mobile
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # The dev fleet host creates/wakes Boxes from `codeam-box:next`
+      # (CODEAM_FLEET_BOX_TAG=next on fleet-1's codeam-fleet-dev unit); npm
+      # `next` is the channel for anyone who wants to try the candidate.
+      - name: Arm `next` with this version (npm + Box image)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm dist-tag add "codeam-cli@${VERSION}" next
+          npm dist-tag add "@codeam/shared@${VERSION}" next
+          docker buildx imagetools create -t "${IMAGE}:next" "${IMAGE}:${VERSION}"
+          echo "next → ${VERSION} (npm codeam-cli + @codeam/shared, ${IMAGE}:next)"
+
+      - name: Journey canary on dev with codeam-cli@${{ needs.setup.outputs.version }}
+        id: canary
+        if: vars.CLI_RELEASE_GATE != 'bypass'
+        env:
+          # Classic PAT with `repo` on codeagent-mobile (same one the
+          # api-v2-integration dispatch uses): dispatch + read its runs.
+          GH_TOKEN: ${{ secrets.CROSS_REPO_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::CROSS_REPO_PAT is not set — the release gate cannot dispatch the journey canary."
+            exit 1
+          fi
+          # The nonce is how we find OUR run: journey-canary.yml puts it in
+          # its run-name. Attempt-scoped so a re-run never adopts an old run.
+          NONCE="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh api "repos/${CANARY_REPO}/dispatches" \
+            -f event_type=cli-release-gate \
+            -f "client_payload[cliVersion]=${VERSION}" \
+            -f "client_payload[nonce]=${NONCE}" >/dev/null
+          echo "dispatched journey-canary (cli-release-gate ${VERSION}, nonce ${NONCE})"
+
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list -R "${CANARY_REPO}" --workflow journey-canary.yml \
+              --event repository_dispatch --limit 30 --json databaseId,displayTitle \
+              --jq ".[] | select(.displayTitle | contains(\"${NONCE}\")) | .databaseId" | head -1)
+            [ -n "${RUN_ID}" ] && break
+            sleep 10
+          done
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::the journey canary run for nonce ${NONCE} never appeared in ${CANARY_REPO}"
+            exit 1
+          fi
+          URL="https://github.com/${CANARY_REPO}/actions/runs/${RUN_ID}"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "journey canary: ${URL}"
+
+          # A fresh Box pulls the ~6 GB image on fleet-1: give it 60 min, well
+          # under the job timeout so a slow canary fails HERE (and rolls `next`
+          # back) instead of the runner killing the job.
+          DEADLINE=$((SECONDS + 60 * 60))
+          while :; do
+            STATE=$(gh run view "${RUN_ID}" -R "${CANARY_REPO}" --json status,conclusion \
+              --jq '"\(.status) \(.conclusion)"' || echo "unknown ")
+            case "${STATE}" in completed\ *) break ;; esac
+            if [ "${SECONDS}" -ge "${DEADLINE}" ]; then
+              echo "::error::journey canary still '${STATE}' after 60 min: ${URL}"
+              exit 1
+            fi
+            sleep 30
+          done
+          CONCLUSION="${STATE#completed }"
+          echo "### Journey canary (dev) for codeam-cli@${VERSION}: ${CONCLUSION} — ${URL}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${CONCLUSION}" != "success" ]; then
+            echo "::error::journey canary ${CONCLUSION} for codeam-cli@${VERSION} — \`latest\` is NOT moved: ${URL}"
+            exit 1
+          fi
+
+      - name: Canary red → `next` back to `latest` (dev runs what prod runs)
+        if: failure()
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          CLI_LATEST=$(npm view codeam-cli dist-tags.latest)
+          SHARED_LATEST=$(npm view @codeam/shared dist-tags.latest)
+          npm dist-tag add "codeam-cli@${CLI_LATEST}" next
+          npm dist-tag add "@codeam/shared@${SHARED_LATEST}" next
+          docker buildx imagetools create -t "${IMAGE}:next" "${IMAGE}:latest"
+          echo "### ❌ Gate failed — \`latest\` stays ${CLI_LATEST}; \`next\` reset to it (npm + ${IMAGE}:next)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote to `latest` (npm + Box image)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BYPASS: ${{ vars.CLI_RELEASE_GATE == 'bypass' }}
+        run: |
+          set -euo pipefail
+          if [ "${BYPASS}" = "true" ]; then
+            echo "::warning::CLI_RELEASE_GATE=bypass — promoting codeam-cli@${VERSION} WITHOUT the journey canary. Delete the repo variable once the emergency is over."
+            echo "### ⚠️ Gate BYPASSED (CLI_RELEASE_GATE=bypass) — promoted without the canary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          npm dist-tag add "codeam-cli@${VERSION}" latest
+          npm dist-tag add "@codeam/shared@${VERSION}" latest
+          docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${VERSION}"
+          # Same replica lag verify-published allows for: dist-tag reads can trail.
+          for ATTEMPT in $(seq 1 15); do
+            SEEN=$(npm view codeam-cli dist-tags.latest 2>/dev/null || true)
+            [ "${SEEN}" = "${VERSION}" ] && break
+            echo "… npm still reports latest=${SEEN:-?} (attempt ${ATTEMPT}/15)"
+            sleep 30
+          done
+          if [ "${SEEN}" != "${VERSION}" ]; then
+            echo "::error::npm dist-tag latest is ${SEEN:-?}, expected ${VERSION}"
+            exit 1
+          fi
+          echo "### ✅ codeam-cli@${VERSION} promoted: npm latest + ${IMAGE}:latest" >> "$GITHUB_STEP_SUMMARY"
+
+  # Keeps the wrapper repo's Codespaces prebuild on the PROMOTED image — it
+  # re-pulls `codeam-box:latest`, so it must run after the gate moved it.
+  refresh-prebuild:
+    name: Refresh the wrapper-repo Codespaces prebuild
+    needs: [setup, gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
       # Keep the wrapper repo's Codespaces PREBUILD in sync with the image we just
       # pushed — WITHOUT ever leaving a window with no valid prebuild.
       #
@@ -386,9 +563,12 @@ jobs:
             -d "{\"event_type\":\"cli-released\",\"client_payload\":{\"cliVersion\":\"$VERSION\"}}"
           echo "::notice::Dispatched api-v2-integration for codeam-cli@$VERSION"
 
+  # The IDE plugins ship the same release as the CLI, so they wait for the gate
+  # too (a pre-release has no gate and publishes the VS Code build as before).
   publish-vsc:
     name: Publish VS Code plugin
-    needs: setup
+    needs: [setup, gate]
+    if: ${{ always() && needs.setup.result == 'success' && (needs.gate.result == 'success' || needs.setup.outputs.is_prerelease == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -472,8 +652,8 @@ jobs:
 
   publish-jetbrains:
     name: Publish JetBrains plugin
-    needs: setup
-    if: ${{ !contains(needs.setup.outputs.version, '-') }}
+    needs: [setup, gate]
+    if: ${{ always() && needs.setup.result == 'success' && needs.gate.result == 'success' && !contains(needs.setup.outputs.version, '-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -763,7 +943,7 @@ jobs:
   notify-failure:
     name: Alert on release failure
     needs:
-      [setup, publish-shared, publish-cli, publish-box, publish-vsc, publish-jetbrains, release, verify-published]
+      [setup, publish-shared, publish-cli, publish-box, gate, publish-vsc, publish-jetbrains, release, verify-published]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
@@ -777,6 +957,7 @@ jobs:
           R_SHARED: ${{ needs.publish-shared.result }}
           R_CLI: ${{ needs.publish-cli.result }}
           R_BOX: ${{ needs.publish-box.result }}
+          R_GATE: ${{ needs.gate.result }}
           R_VSC: ${{ needs.publish-vsc.result }}
           R_JB: ${{ needs.publish-jetbrains.result }}
           R_RELEASE: ${{ needs.release.result }}
@@ -788,14 +969,19 @@ jobs:
           add "publish-shared"    "$R_SHARED"
           add "publish-cli"       "$R_CLI"
           add "publish-box"       "$R_BOX"
+          add "gate"              "$R_GATE"
           add "publish-vsc"       "$R_VSC"
           add "publish-jetbrains" "$R_JB"
           add "release"           "$R_RELEASE"
           add "verify-published"  "$R_VERIFY"
           [ -n "$FAILED" ] || FAILED=" (see the run)"
+          HINT="If a publish job failed, check NPM_TOKEN expiry first (granular npm tokens last 90 days)."
+          if [ "$R_GATE" = "failure" ]; then
+            HINT="Release gate RED: the journey canary failed on dev with this version — npm \`latest\` and codeam-box:latest were NOT moved (\`next\` was reset to latest). Fix forward with the next tag, or re-run the gate job once dev is healthy."
+          fi
           MSG=$(printf '%s\n%s\n%s' \
             "🚨 **Release $TAG FAILED** — failing jobs:$FAILED" \
-            "If a publish job failed, check NPM_TOKEN expiry first (granular npm tokens last 90 days)." \
+            "$HINT" \
             "$RUN_URL")
           echo "$MSG"
           if [ -z "${WEBHOOK:-}" ]; then
@@ -941,7 +1127,7 @@ jobs:
         run: |
           set -uo pipefail
           MSG=$(printf '%s\n%s' \
-            "🚀 **Release $TAG published** — codeam-cli@$VERSION + @codeam/shared@$VERSION verified on npm; VS Code + JetBrains artifacts attached to the GitHub release." \
+            "🚀 **Release $TAG published** — codeam-cli@$VERSION + @codeam/shared@$VERSION promoted to npm latest after the journey canary passed on dev; VS Code + JetBrains artifacts attached to the GitHub release." \
             "$RUN_URL")
           echo "$MSG"
           [ -n "${WEBHOOK:-}" ] || { echo "::warning::DISCORD_RELEASE_WEBHOOK not set"; exit 0; }

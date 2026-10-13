@@ -229,3 +229,20 @@ describe.skipIf(posixOnly)('runSelfUpdate — running from current itself', () =
     warn.mockRestore();
   });
 });
+
+// The clients release gate (codeagent-nczt.6) publishes every tag to npm under
+// the `next` dist-tag and moves `latest` only after the journey canary passes on
+// a dev Box. Every Box and host self-updates hourly, so this lookup must read
+// `latest` — a bare `npm view codeam-cli version` — and nothing else: asking for
+// `next` (or the highest published version) would ship an unverified release
+// to every user within the hour.
+describe('runSelfUpdate — follows the npm `latest` dist-tag only', () => {
+  it.skipIf(posixOnly)('asks npm for `codeam-cli version` (the latest dist-tag), never `@next`', async () => {
+    const run = fakeInstallRun('2.66.0', '2.65.16');
+
+    await runSelfUpdateWith(deps({ run }));
+
+    const views = run.mock.calls.filter(([, args]) => args[0] === 'view').map(([, args]) => args);
+    expect(views).toEqual([['view', 'codeam-cli', 'version']]);
+  });
+});

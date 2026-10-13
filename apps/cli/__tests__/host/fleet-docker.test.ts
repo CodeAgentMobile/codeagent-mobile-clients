@@ -26,13 +26,18 @@ function cmd(type: string, payload: Record<string, unknown>): RemoteCommand {
 
 describe('fleet-docker', () => {
   let savedImage: string | undefined;
+  let savedTag: string | undefined;
   beforeEach(() => {
     savedImage = process.env.CODEAM_FLEET_BOX_IMAGE;
+    savedTag = process.env.CODEAM_FLEET_BOX_TAG;
     delete process.env.CODEAM_FLEET_BOX_IMAGE;
+    delete process.env.CODEAM_FLEET_BOX_TAG;
   });
   afterEach(() => {
     if (savedImage === undefined) delete process.env.CODEAM_FLEET_BOX_IMAGE;
     else process.env.CODEAM_FLEET_BOX_IMAGE = savedImage;
+    if (savedTag === undefined) delete process.env.CODEAM_FLEET_BOX_TAG;
+    else process.env.CODEAM_FLEET_BOX_TAG = savedTag;
   });
 
   it('host-agent keeps re-exporting the moved public surface (import paths unchanged)', () => {
@@ -160,6 +165,19 @@ describe('fleet-docker', () => {
       const args = buildFleetBoxRunArgs({ ...BOX, limits: LIMITS });
       expect(args).not.toContain('--pull=always');
       expect(args[args.length - 1]).toBe('codeam-box:ci');
+    });
+
+    it('a registry tag (the dev fleet on `:next`) keeps the registry pull semantics', () => {
+      process.env.CODEAM_FLEET_BOX_TAG = 'next';
+      expect(resolveFleetBoxImage()).toBe('ghcr.io/edgar-durand/codeam-box:next');
+      const args = buildFleetBoxRunArgs({ ...BOX, limits: LIMITS });
+      expect(args).toContain('--pull=always');
+      expect(args[args.length - 1]).toBe('ghcr.io/edgar-durand/codeam-box:next');
+    });
+
+    it('an invalid registry tag falls back to :latest', () => {
+      process.env.CODEAM_FLEET_BOX_TAG = 'next; rm -rf /';
+      expect(resolveFleetBoxImage()).toBe('ghcr.io/edgar-durand/codeam-box:latest');
     });
 
     it('migrate = the same template as `create`, detached-less and pull-less', () => {

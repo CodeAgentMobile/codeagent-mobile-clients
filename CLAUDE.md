@@ -546,7 +546,7 @@ and `.github/workflows/release.yml` does the rest:
 4. `npm ci` at the workspace root → installs cli + vsc-plugin + shared together.
 5. CLI typecheck + tests (must pass — release-gate).
 6. Builds CLI, VS Code plugin, and the JetBrains plugin. Packages the `.vsix` and `.tgz`.
-7. Publishes to npm, VS Code Marketplace, and Open VSX.
+7. Publishes the CLI + `@codeam/shared` to npm under `next`, runs the release gate (below), then promotes to `latest` and publishes to VS Code Marketplace and Open VSX.
 8. Runs git-cliff to generate the release's changelog section.
 9. Prepends that section to each of the three `CHANGELOG.md` files and commits back to `main` with `chore(changelog): notes for vX.Y.Z [skip ci]`.
 10. Creates a GitHub Release with the generated notes and all three artifacts attached.
@@ -559,6 +559,8 @@ and `.github/workflows/release.yml` does the rest:
 - `JETBRAINS_MARKETPLACE_TOKEN` — JetBrains Hub permanent token (https://plugins.jetbrains.com/author/me/tokens). Auto-injected as `PUBLISH_TOKEN` env var that the Gradle plugin reads.
 
 **JetBrains Marketplace** is fully automated alongside npm + VS Code Marketplace + Open VSX. Tagging `vX.Y.Z` publishes the plugin to the **stable** channel via `./gradlew publishPlugin` in CI. Pre-release tags (`vX.Y.Z-rc.N`) skip the marketplace push — the build still runs and the `.zip` is attached to the GitHub Release for manual upload to a non-stable channel if needed.
+
+**⚠️ Release gate — a tag reaches users only after the journey canary passes (codeagent-nczt.6).** The CLI and `@codeam/shared` are published to npm dist-tag **`next`** and the Box image to `codeam-box:<version>`; the `gate` job points `next` (npm + `codeam-box:next`) at the version, dispatches `codeagent-mobile`'s `journey-canary.yml` against **dev** (event `cli-release-gate`), whose fleet host (`codeam-fleet-dev` on fleet-1, `CODEAM_FLEET_BOX_TAG=next`) runs Boxes from `:next`; the canary must see its Box session report **this exact version**. Green → `latest` (npm + `codeam-box:latest`), then the prebuild refresh, VS Code, JetBrains and the GitHub Release. Red → `latest` never moves, `next` is reset to `latest`, Discord alert. Adds ~10–20 min per release. `npm view codeam-cli version` (the hourly self-update), `/latest` (update notifier, api-v2) and `codeam-cli@latest` installs all read `latest` — never make any of them read `next`. Break-glass: repo variable `CLI_RELEASE_GATE=bypass`. Re-running the failed `gate` job re-arms `next` and re-runs the canary.
 
 **⚠️ A tag is NOT "in prod" when npm serves it (owner rule, 2026-10-02).** Every tag also rebuilds the **CodeAgent Box image** (~8 min) and triggers the **Codespaces prebuild** on `CodeAgentMobile/codeam-codespace` (~20–24 min after the image), about **35–40 min from tag to new deploys**. Until both finish, a NEW scratch Box or codespace boots the CLI baked into the previous image. Only the host-agent startup self-update moves it forward, and that was found not applying on 2026-10-02. So:
 - **batch fixes into ONE release**; don't tag every PR (2.76.12 → .13 → .14 in one afternoon meant three full rebuilds);
