@@ -42,6 +42,33 @@ describe('BatonController', () => {
     expect(publishState).toHaveBeenLastCalledWith('LOCAL_DRIVE', 'local_tui', 'conv-1');
   });
 
+  // codeagent-04jp regression (2026-10-10): the relay starts before the agent,
+  // and its first heartbeat re-affirmed the constructor default LOCAL_DRIVE
+  // while the native TUI was still starting — the phone locked its composer
+  // behind a Take Control that could not work yet.
+  it('has no state to affirm until begin() publishes one', async () => {
+    const local = fakeDriver('local_tui', 'conv-1');
+    const mobile = fakeDriver('mobile_acp', 'conv-1');
+    const c = new BatonController({ local, mobile, publishState: vi.fn() });
+    expect(c.currentState()).toBeNull();
+    await c.begin();
+    expect(c.currentState()).toEqual({
+      state: 'LOCAL_DRIVE',
+      driver: 'local_tui',
+      conversationId: 'conv-1',
+    });
+  });
+
+  it('still has no state to affirm when the agent fails to start', async () => {
+    const local = fakeDriver('local_tui', 'conv-1', { failStart: true });
+    const mobile = fakeDriver('mobile_acp', 'conv-1');
+    const publishState = vi.fn();
+    const c = new BatonController({ local, mobile, publishState });
+    await expect(c.begin()).rejects.toThrow('local_tui start failed');
+    expect(c.currentState()).toBeNull();
+    expect(publishState).not.toHaveBeenCalled();
+  });
+
   it('take-control waits for a safe yield, stops local, resumes the SAME id on mobile', async () => {
     const local = fakeDriver('local_tui', 'conv-1');
     const mobile = fakeDriver('mobile_acp', 'conv-1');
