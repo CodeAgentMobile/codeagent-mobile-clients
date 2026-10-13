@@ -139,6 +139,21 @@ From **2.0.0 onwards all three clients ship under the same version line.** Pushi
 
 Publishing secrets (`PAT`, `OVSX_TOKEN`, `CERTIFICATE_CHAIN`, `PRIVATE_KEY`, `PRIVATE_KEY_PASSWORD`, `PUBLISH_TOKEN`) live in local `.env` files and are gitignored — they never land in this repo.
 
+### Release gate — `next` first, `latest` after the journey canary
+
+A tag publishes `codeam-cli` and `@codeam/shared` to the npm dist-tag **`next`**
+and the Box image to `codeam-box:<version>`. The `gate` job then points `next`
+(npm + `codeam-box:next`, which the dev fleet runs) at that version and runs the
+journey canary in `codeagent-mobile` against **dev**; the canary requires its
+Box session to report that exact version. Only a green run moves **`latest`**
+(npm + `codeam-box:latest`) — what every Box/host self-updates to, what new
+Boxes and codespaces boot — and lets the VS Code / JetBrains publishes and the
+GitHub Release proceed. A red run leaves `latest` alone, resets `next` and
+alerts Discord. So `npm view codeam-cli version` can trail the newest tag by
+the gate's ~10–20 min, or stay behind a tag whose gate failed — check
+`npm view codeam-cli dist-tags` before suspecting the token. Break-glass: repo
+variable `CLI_RELEASE_GATE=bypass` (delete it afterwards).
+
 ### When a release doesn't show up on npm
 
 The release workflow ends with a **`verify-published`** job that re-reads the
