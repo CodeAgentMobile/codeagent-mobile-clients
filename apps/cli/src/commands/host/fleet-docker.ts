@@ -253,14 +253,29 @@ export function isMissingVolumeError(stderr: string): boolean {
   return /no such volume/i.test(stderr);
 }
 
+/** The registry repo every fleet box image is published to (release.yml `publish-box`). */
+const FLEET_BOX_REPO = 'ghcr.io/edgar-durand/codeam-box';
+
+/** A docker tag: `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. */
+const DOCKER_TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
 /**
  * Resolve the box image the fleet host runs. Host-side config, NEVER read
  * from the wire (the wire payload carries no image field — see
- * `FleetCreateBoxCommand`). Overridable with `CODEAM_FLEET_BOX_IMAGE` (the
- * real-Docker CI int test points this at its freshly-built local tag).
+ * `FleetCreateBoxCommand`).
+ *
+ * - `CODEAM_FLEET_BOX_IMAGE` — a LOCAL image used verbatim, never pulled or
+ *   compared (the real-Docker CI int test's freshly-built tag).
+ * - `CODEAM_FLEET_BOX_TAG` — another tag of the REGISTRY image, with the same
+ *   pull / staleness / GC behaviour as `:latest`. The DEV fleet host sets
+ *   `next`: the clients release gate (codeagent-nczt.6) pushes the candidate
+ *   image to `:next`, the journey canary walks a dev Box on it, and only a
+ *   green run moves `:latest`. Prod leaves it unset.
  */
 export function resolveFleetBoxImage(): string {
-  return process.env.CODEAM_FLEET_BOX_IMAGE || 'ghcr.io/edgar-durand/codeam-box:latest';
+  if (process.env.CODEAM_FLEET_BOX_IMAGE) return process.env.CODEAM_FLEET_BOX_IMAGE;
+  const tag = process.env.CODEAM_FLEET_BOX_TAG?.trim();
+  return `${FLEET_BOX_REPO}:${tag && DOCKER_TAG_RE.test(tag) ? tag : 'latest'}`;
 }
 
 /**
