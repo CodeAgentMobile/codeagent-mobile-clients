@@ -283,6 +283,10 @@ const PROMPT_IDLE_TIMEOUT_MS = 90_000;
  */
 const PROMPT_ACTIVE_IDLE_TIMEOUT_MS = 600_000;
 
+/** How long a turn the idle watchdog abandoned may take to answer its
+ *  `session/cancel` before the next queued prompt goes out anyway. */
+const ABANDONED_TURN_SETTLE_MS = 10_000;
+
 /**
  * Capabilities we advertise to the agent. Phase 1 supports:
  *   - fs.readTextFile / writeTextFile — implemented below against
@@ -957,10 +961,12 @@ export class AcpClient {
       `prompt → session=${this.sessionId.slice(0, 8)} textChars=${textLen} imageBlocks=${imageCount}`,
     );
     const t0 = Date.now();
+    const sessionId = this.sessionId;
     const send = this.connection.prompt({
-      sessionId: this.sessionId,
+      sessionId,
       prompt: blocks,
     });
+    let idleTripped = false;
 
     // Idle watchdog, NOT a total-elapsed cap. The `Client` handlers
     // bump it on every `session/update` and suspend it across a
@@ -969,14 +975,16 @@ export class AcpClient {
     // PROMPT_IDLE_TIMEOUT_MS for the full rationale.
     const idle = createIdleTimeout(
       PROMPT_IDLE_TIMEOUT_MS,
-      () =>
-        new Error(
+      () => {
+        idleTripped = true;
+        return new Error(
           `ACP prompt idle — adapter sent no updates for the idle window ` +
             `(${PROMPT_IDLE_TIMEOUT_MS / 1000}s silent-from-start / ` +
             `${PROMPT_ACTIVE_IDLE_TIMEOUT_MS / 1000}s once active). ` +
             `Likely the underlying agent's auth or network is misconfigured; check the adapter stderr ` +
             `lines above (acpAdapter tag) for the actual error.`,
-        ),
+        );
+      },
       PROMPT_ACTIVE_IDLE_TIMEOUT_MS,
     );
     this.promptIdle = idle;
@@ -1021,6 +1029,13 @@ export class AcpClient {
         'acpClient',
         `prompt ← failed elapsedMs=${Date.now() - t0} err=${err instanceof Error ? err.message : String(err)}`,
       );
+      // The watchdog gave up but the adapter is still running this turn. End
+      // it HERE, while the prompt chain still holds the next queued prompt:
+      // once released, that prompt reaches the adapter before any caller's
+      // cleanup cancel does, and the cancel kills IT instead — opencode even
+      // folds a prompt into a still-running turn (codeagent-u7mm: a queued
+      // message failed as "empty reply").
+      if (idleTripped) await this.cancelAbandonedTurn(sessionId, send);
       throw err;
     } finally {
       // Permanently disarm so a late bump/timer can't reject after
@@ -1028,6 +1043,35 @@ export class AcpClient {
       idle.clear();
       this.promptIdle = null;
     }
+  }
+
+  /**
+   * Cancel a turn the idle watchdog abandoned and wait, bounded, for the
+   * adapter to answer its `session/prompt` — the proof the turn is over before
+   * the next prompt is sent. Best-effort: a dead adapter can't hold the queue
+   * longer than {@link ABANDONED_TURN_SETTLE_MS}.
+   */
+  private async cancelAbandonedTurn(sessionId: string, send: Promise<unknown>): Promise<void> {
+    try {
+      await this.connection?.cancel({ sessionId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn('acpClient', `cancel of abandoned turn failed: ${msg}`);
+      return;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const settled = await Promise.race([
+      send.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ABANDONED_TURN_SETTLE_MS);
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+    log.info('acpClient', `abandoned turn cancelled settled=${settled}`);
   }
 
   /**

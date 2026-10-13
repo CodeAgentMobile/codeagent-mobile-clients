@@ -32,6 +32,7 @@ import * as coderabbitConfigure from '../../../src/agents/coderabbit/configure';
 import type { RemoteCommand, SquadRosterData } from '@codeam/shared';
 import type { CoderabbitConfigureResult } from '../../../src/agents/coderabbit/configure';
 import { _transport as pairingTransport } from '../../../src/services/pairing.service';
+import { TurnQueue } from '../../../src/agents/acp/turn-queue';
 
 let homeDir: string;
 
@@ -68,6 +69,7 @@ function makeCtx(over: { squad?: SquadState } = {}) {
   const bubbles: string[] = [];
   const streaming = {
     beginTurn: vi.fn(async () => undefined),
+    turns: new TurnQueue(),
     getCurrentText: vi.fn(() => ''),
     hasVisibleProgress: vi.fn(() => false),
     closeTurnWithInteractiveDetection: vi.fn(async () => false),

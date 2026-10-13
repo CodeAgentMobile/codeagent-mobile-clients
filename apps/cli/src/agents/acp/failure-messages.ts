@@ -423,6 +423,17 @@ export const TURN_FAILURE_MESSAGE =
   '⚠️ **The agent hit an error and couldn’t finish this turn.** Please send your message again.';
 
 /**
+ * The idle watchdog ended a turn the agent left silent (`AcpClient`'s "ACP
+ * prompt idle"). Not an error the agent reported: say what happened, so the
+ * user knows the message went unanswered and resending is the fix — the
+ * generic copy read as a crash (codeagent-u7mm).
+ */
+export const IDLE_TURN_FAILURE_MESSAGE =
+  '⚠️ **The agent stopped responding, so this turn was ended.** Your message wasn’t answered — send it again.';
+
+const IDLE_TURN_RE = /ACP prompt idle/;
+
+/**
  * Persistent, actionable message for a turn that completed NORMALLY (no
  * throw — `stopReason: 'end_turn'`) but the agent's own ACP server streamed
  * ZERO visible content: no assistant text, no thinking, no tool activity.
@@ -648,7 +659,9 @@ export function failureBubble(opts: {
   if (looksLikeProviderOutage(opts.detail) || looksLikeProviderOutage(opts.recentStderr)) {
     return providerOutageMessage(opts.agent, opts.railWireId);
   }
-  if (!opts.hadText) return TURN_FAILURE_MESSAGE;
+  if (!opts.hadText) {
+    return IDLE_TURN_RE.test(opts.detail) ? IDLE_TURN_FAILURE_MESSAGE : TURN_FAILURE_MESSAGE;
+  }
   return null;
 }
 
