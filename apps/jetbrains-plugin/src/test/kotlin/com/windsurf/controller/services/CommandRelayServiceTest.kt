@@ -15,6 +15,9 @@ class CommandRelayServiceTest {
         val arr = JsonParser.parseString(payload).asJsonArray
         assertEquals(true, arr[0].asJsonObject.get("isTerminal").asBoolean)
         assertEquals(false, arr[1].asJsonObject.get("isTerminal").asBoolean)
+        // codeagent-vzbd: terminal agents are not deliverable from the plugin.
+        assertEquals(false, arr[0].asJsonObject.get("dispatchable").asBoolean)
+        assertEquals(true, arr[1].asJsonObject.get("dispatchable").asBoolean)
     }
 }
 

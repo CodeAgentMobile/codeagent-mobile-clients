@@ -63,6 +63,11 @@ internal fun buildAgentsPayload(agents: List<DetectedAgent>): JsonArray {
             addProperty("icon", agent.icon)
             addProperty("installed", agent.installed)
             addProperty("isTerminal", agent.isTerminal)
+            // The apps offer only agents this plugin can hand a prompt to
+            // (codeagent-vzbd). Every non-terminal agent has a delivery
+            // strategy here; terminal ones are refused by RemoteCommandRouter
+            // because codeam-cli runs them.
+            addProperty("dispatchable", !agent.isTerminal)
         })
     }
     return agentsArray

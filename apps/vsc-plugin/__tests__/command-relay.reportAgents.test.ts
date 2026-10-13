@@ -67,4 +67,18 @@ describe('CommandRelayService.reportAgents wire shape', () => {
     const [, body] = postJson.mock.calls[0] as [string, { agents: Array<Record<string, unknown>> }];
     expect(body.agents[0]).not.toHaveProperty('isTerminal');
   });
+
+  it('reports dispatchable: true only for agents this extension can deliver a prompt to', async () => {
+    const postJson = vi
+      .spyOn(relay as unknown as { postJson: ReturnType<typeof vi.fn> }, 'postJson')
+      .mockResolvedValue({});
+    relay.reportAgents([
+      { id: '__vscode_lm__:copilot', name: 'VS Code Chat', icon: 'copilot', installed: true, isTerminalAgent: false },
+      { id: 'codeium.windsurf', name: 'Windsurf', icon: 'windsurf', installed: true, isTerminalAgent: false },
+      { id: 'claude', name: 'Claude Code', icon: 'claude', installed: true, isTerminalAgent: true },
+    ]);
+    const [, body] = postJson.mock.calls[0] as [string, { agents: Array<Record<string, unknown>> }];
+    expect(body.agents.map((a) => a.dispatchable)).toEqual([true, false, false]);
+  });
 });
+
