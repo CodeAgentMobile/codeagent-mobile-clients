@@ -471,7 +471,8 @@ export function composeHeartbeatRiders(
  *    latch mobile on "Switching…". The throttle clock is left untouched in
  *    that case so the very next tick re-affirms the steady state.
  *  - **No-op when the baton isn't active** (`currentState()` → `null`, e.g.
- *    after teardown) — non-baton sessions never construct this at all.
+ *    while the agent is still starting, after a failed start, or after
+ *    teardown) — non-baton sessions never construct this at all.
  */
 export function makeBatonHeartbeatReaffirm(deps: {
   /** Current baton state, or `null` when there is nothing to affirm. */

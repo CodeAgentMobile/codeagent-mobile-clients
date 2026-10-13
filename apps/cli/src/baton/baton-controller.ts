@@ -15,6 +15,8 @@ export class BatonController {
   private _state: BatonState = 'LOCAL_DRIVE';
   private _active: DriverKind = 'local_tui';
   private _conversationId: string | null = null;
+  /** True once `publishState` has run — `currentState()` is meaningless before. */
+  private _published = false;
 
   constructor(private readonly deps: BatonControllerDeps) {}
 
@@ -43,7 +45,15 @@ export class BatonController {
    *  of who holds the baton. Read by the heartbeat re-affirmation rider
    *  ({@link makeBatonHeartbeatReaffirm}), which re-posts it periodically so the
    *  backend's 1 h Redis snapshot never expires under a live session. */
-  currentState(): { state: BatonState; driver: DriverKind; conversationId: string | null } {
+  currentState(): { state: BatonState; driver: DriverKind; conversationId: string | null } | null {
+    // Nothing to affirm before `begin()` has published a real state. The relay
+    // starts BEFORE the agent (codeagent-04jp), so its first heartbeat used to
+    // re-affirm the constructor default `LOCAL_DRIVE` while the native TUI was
+    // still starting (or had failed): the phone disabled its composer behind
+    // "Driving from terminal" + a Take Control that could not work yet, and
+    // the prompt that would have got the "still starting" notice was never
+    // sendable (codeagent-04jp, 2026-10-10 replay).
+    if (!this._published) return null;
     return {
       state: this._state,
       driver: this._active,
@@ -205,6 +215,7 @@ export class BatonController {
 
   private setState(state: BatonState): void {
     this._state = state;
+    this._published = true;
     this.deps.publishState(state, this._active, this._conversationId);
   }
 }

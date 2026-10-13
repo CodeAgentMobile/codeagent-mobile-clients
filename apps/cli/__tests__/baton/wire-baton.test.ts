@@ -9,6 +9,7 @@ import {
 } from '../../src/baton/wire-baton';
 import type { RemoteCommand } from '../../src/services/command-relay.service';
 import { isLocalSession } from '../../src/baton/gate';
+import { BatonController } from '../../src/baton/baton-controller';
 import type { NormalizedMessage } from '@codeam/shared';
 
 function msg(
@@ -388,6 +389,42 @@ describe('makeBatonHeartbeatReaffirm (the 1 h backend snapshot never expires)', 
     const { publish, reaffirm } = harness(() => LOCAL);
     reaffirm({ firstAfterConnect: true });
     expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith('LOCAL_DRIVE', 'local_tui', 'conv-1');
+  });
+
+  // codeagent-04jp (2026-10-10): the relay's first heartbeat fires right after
+  // pairing, BEFORE `controller.begin()` has spawned the native TUI. Wired to a
+  // real controller it must publish nothing until begin() does, or the phone
+  // shows "Driving from terminal" for an agent that is not running yet.
+  it('publishes nothing for a real controller whose agent is still starting', async () => {
+    let finishStart!: (id: string) => void;
+    const driver = (kind: 'local_tui' | 'mobile_acp') => ({
+      kind,
+      start: vi.fn(
+        () =>
+          new Promise<string | null>((r) => {
+            if (kind === 'local_tui') finishStart = r;
+          }),
+      ),
+      stop: vi.fn(async () => {}),
+      dispatch: vi.fn(async () => {}),
+      whenSafeToYield: async () => {},
+    });
+    const controllerPublish = vi.fn();
+    const controller = new BatonController({
+      local: driver('local_tui'),
+      mobile: driver('mobile_acp'),
+      publishState: controllerPublish,
+    });
+    const { publish, reaffirm, tick } = harness(() => controller.currentState());
+    const begun = controller.begin();
+    reaffirm({ firstAfterConnect: true });
+    tick();
+    expect(publish).not.toHaveBeenCalled();
+    finishStart('conv-1');
+    await begun;
+    expect(controllerPublish).toHaveBeenCalledWith('LOCAL_DRIVE', 'local_tui', 'conv-1');
+    tick();
     expect(publish).toHaveBeenCalledWith('LOCAL_DRIVE', 'local_tui', 'conv-1');
   });
 
