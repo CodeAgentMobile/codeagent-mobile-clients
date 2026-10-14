@@ -774,7 +774,12 @@ async function startDevServer(
   emitProgress('BOOT_SEQUENCE', `${spawnable.command} ${spawnable.args.join(' ')}`);
   const devServer = spawn(spawnable.command, spawnable.args, {
     cwd,
-    env: { ...process.env, ...(spawnable.env ?? {}), ...extraEnv },
+    // PYTHONUNBUFFERED: Python block-buffers stdout into a pipe, so a
+    // `python3 -m http.server` (what the detector picks for a plain HTML site)
+    // never shows its "Serving HTTP on … (http://0.0.0.0:8000/)" line while it
+    // already serves — every such preview ended in a 120 s ready_timeout
+    // (codeagent-nczt.9). First, so the project's own env can still override it.
+    env: { PYTHONUNBUFFERED: '1', ...process.env, ...(spawnable.env ?? {}), ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
     // POSIX: lead a new process group so teardown can SIGTERM the whole
     // tree. Dev servers fork worker children that bind the port; killing
