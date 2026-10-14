@@ -147,6 +147,22 @@ describe('start_preview', () => {
     expect(bridge.status()).toEqual(r);
   });
 
+  it("hands the agent the dev server's last output so it can fix its own command (erlynfaye 2026-10-14)", async () => {
+    attach(bridge);
+    mockStart.mockImplementation(async (_c, _d, _t, opts: { onEvent: (t: string, p: object) => void }) => {
+      opts.onEvent('preview_error', {
+        stage: 'spawn',
+        message: 'The dev server exited (code 1) before it was ready. It may need a database or other services.',
+        stderrTail: 'x'.repeat(5000) + '\nArgError: unknown or unexpected option: --port\n',
+      });
+    });
+    const r = await bridge.start({ command: 'npx', args: ['serve', '--single', '--port', '5173'], port: 5173 });
+    expect(r).toMatchObject({ status: 'error', stage: 'spawn' });
+    const output = (r as { output?: string }).output ?? '';
+    expect(output).toContain('unknown or unexpected option: --port');
+    expect(output.length).toBeLessThanOrEqual(2000);
+  });
+
   it('returns the pipeline error verbatim', async () => {
     attach(bridge);
     mockResolve.mockResolvedValue(DETECTION);
