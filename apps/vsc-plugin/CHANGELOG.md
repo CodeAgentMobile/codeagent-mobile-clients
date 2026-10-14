@@ -4,6 +4,19 @@ All notable changes to the CodeAgent Mobile VS Code extension are documented her
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.31] — 2026-10-14
+
+### Fixed
+
+- **cli:** Cap the chat-pipe text frame and never loop on a 413
+- **cli:** Make a python static-site preview ready instead of timing out
+- **cli:** Let codex one-shots run outside a git repo
+- **cli:** A failed agent preview hands the agent the dev server's output
+
+### Tests
+
+- **cli:** Skip the POSIX-only preview subdir spawn test on Windows
+
 ## [2.76.30] — 2026-10-14
 
 ### CI
