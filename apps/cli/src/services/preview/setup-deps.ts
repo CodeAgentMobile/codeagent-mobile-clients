@@ -110,3 +110,43 @@ export function isJsInstallCommand(cmd: string, args: string[]): boolean {
   const verb = args[0];
   return verb === 'install' || verb === 'i' || verb === 'ci';
 }
+
+/**
+ * Pre-flight PHP dependency check — the Composer twin of
+ * `detectMissingNodeDeps`. Returns `composer install` when `composer.json`
+ * exists but `vendor/` is missing, else `null` (no PHP project, or deps
+ * already installed — trusted, same as an existing `node_modules/`).
+ *
+ * Without it a fresh clone of a Yii/Laravel/Symfony repo boots `php -S` on
+ * an app whose `vendor/autoload.php` doesn't exist, and the first request
+ * fatals. The agent's `setup_commands` can't be relied on to emit it (the
+ * detect prompt forbids installs there, because the pre-flight owns them).
+ *
+ * `--ignore-platform-req=ext-*` is the Composer counterpart of npm's
+ * `--legacy-peer-deps`: a project that declares an extension the image
+ * lacks (ext-redis, ext-imagick…) still installs, and only the code paths
+ * that actually use it fail. The PHP VERSION constraint is still enforced.
+ */
+export function detectMissingPhpDeps(cwd: string): { cmd: string; args: string[] } | null {
+  if (!fs.existsSync(path.join(cwd, 'composer.json'))) return null;
+  if (fs.existsSync(path.join(cwd, 'vendor'))) return null;
+  return {
+    cmd: 'composer',
+    args: [
+      'install',
+      '--no-interaction',
+      '--no-progress',
+      '--prefer-dist',
+      '--ignore-platform-req=ext-*',
+    ],
+  };
+}
+
+/**
+ * `composer install` / `composer i` from the agent's `setup_commands`. Skipped
+ * when the Composer pre-flight already ran, so `vendor/` isn't installed twice.
+ */
+export function isComposerInstallCommand(cmd: string, args: string[]): boolean {
+  if (cmd !== 'composer') return false;
+  return args[0] === 'install' || args[0] === 'i';
+}

@@ -374,7 +374,9 @@ stop/sleep never touches the volume).
 
 **`apps/box`** (`apps/box/Dockerfile`, `apps/box/README.md`) — the production runtime image:
 `node:20-slim` + git + ca-certificates + python3 + build-essential (so the rescued project's own
-`npm install` / in-app Preview dependency pre-flight can build native addons), non-root `box` user
+`npm install` / in-app Preview dependency pre-flight can build native addons), PHP CLI (+ the
+Yii/Laravel/Symfony extension set) and Composer (so PHP repos preview via `php -S` after the
+Composer pre-flight `detectMissingPhpDeps` in `services/preview/setup-deps.ts`, codeagent-nczt.10), non-root `box` user
 (`HOME=/home/box`), `codeam-cli` installed globally from npm (`ARG CODEAM_CLI_VERSION=latest`,
 pinned by the fleet release pipeline), `ENTRYPOINT ["codeam", "host-agent"]`. The image does **not**
 self-isolate — every hard-isolation invariant above is applied by the CALLER (`fleet_create_box`),
