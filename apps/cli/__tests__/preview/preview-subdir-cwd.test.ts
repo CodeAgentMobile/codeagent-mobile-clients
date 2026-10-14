@@ -115,7 +115,10 @@ describe('resolveDetectionCwd', () => {
 });
 
 describe('runPreviewStart with an app in a subfolder', () => {
-  it('spawns the dev server INSIDE detection.cwd and gets it ready', async () => {
+  // The fixture "python" is a `#!/bin/sh` script; Windows can't exec it (and a
+  // Windows venv is `.venv\Scripts\python.exe` anyway). Previews run on the
+  // Linux box/codespace, which the POSIX runners cover.
+  it.skipIf(process.platform === 'win32')('spawns the dev server INSIDE detection.cwd and gets it ready', async () => {
     const { events, emit, error } = collect();
     await runPreviewStart({
       sessionId: 'hz3h-1',
