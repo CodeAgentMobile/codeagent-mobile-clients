@@ -246,6 +246,11 @@ jobs:
             -t codeam-box-fleet-e2e:ci \
             "$GITHUB_WORKSPACE/apps/box"
 
+          # PHP projects preview with `php -S` + a Composer pre-flight
+          # (codeagent-nczt.10): both must run as the runtime `box` user.
+          docker run --rm --entrypoint sh codeam-box-fleet-e2e:ci \
+            -c 'php -v && composer --version && php -m | grep -qx mbstring'
+
           npx vitest run fleet-box.int
 
       # ── Session Baton REAL gate — provisioning ───────────────────────────

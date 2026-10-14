@@ -32,7 +32,8 @@
 # cache go to NON-home locations that survive the mount:
 #   • npm-global agents + codeam-cli → /usr/local/{lib,bin}
 #   • curl-installer agents (claude/cursor/kimi/coderabbit) → /opt/agents
-#   • dolt / aider / gh / glab → /usr/local/bin
+#   • dolt / aider / gh / glab / composer → /usr/local/bin
+#   • php (apt) → /usr/bin
 #
 # ⚠️ SIZE RULE: NEVER `chown -R` a large tree in its own RUN — Docker's
 # copy-on-write duplicates every touched file into a new layer (a standalone
@@ -93,6 +94,42 @@ RUN apt-get update \
         libnspr4 \
         libnss3 \
     && rm -rf /var/lib/apt/lists/*
+
+# ── PHP CLI + Composer (PHP projects: Yii, Laravel, Symfony, plain PHP) ────
+# Without a php binary a PHP repo could never preview: the agent detected
+# Yii3, then `php -S` died ENOENT ~1 s later, twelve times in a row
+# (imaginer740's codespace, 2026-10-09/10). apt can't run inside a live box
+# (--cap-drop ALL + no-new-privileges), so the runtime has to be baked here.
+# The extensions are the set Yii3/Laravel/Symfony's default skeletons
+# require; php-cli ships the built-in dev server (`php -S`) the Preview uses.
+# Composer comes from the official installer (signature-checked against
+# composer.github.io, as getcomposer.org documents), NOT Debian's `composer`
+# package: that one is years behind and drags in ~40 php-symfony-* packages.
+# Composer runs from /usr/local/bin (outside the shadowed /home/box); its own
+# cache lands in ~/.cache/composer at runtime, which is fine.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        php-cli \
+        php-mbstring \
+        php-xml \
+        php-curl \
+        php-zip \
+        php-intl \
+        php-sqlite3 \
+        php-mysql \
+        php-pgsql \
+        php-gd \
+        php-bcmath \
+        php-opcache \
+    && rm -rf /var/lib/apt/lists/* \
+    && EXPECTED_SIG="$(curl -fsSL --connect-timeout 15 --max-time 60 https://composer.github.io/installer.sig)" \
+    && curl -fsSL --connect-timeout 15 --max-time 60 https://getcomposer.org/installer -o /tmp/composer-setup.php \
+    && ACTUAL_SIG="$(php -r "echo hash_file('sha384', '/tmp/composer-setup.php');")" \
+    && if [ "$EXPECTED_SIG" != "$ACTUAL_SIG" ]; then echo "composer installer signature mismatch" >&2; exit 1; fi \
+    && php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer \
+    && rm -f /tmp/composer-setup.php \
+    && php -v \
+    && composer --version
 
 # The non-root box user — created UP FRONT so the in-place chown in the npm RUN
 # below can target `box`. ⚠️ Do NOT set `ENV HOME=/home/box` here: the build's
