@@ -2251,6 +2251,12 @@ export function prewarmPreviewDetection(runtime: RuntimeStrategy): void {
     try {
       const cwd = process.cwd();
       if (await readPreviewConfig(cwd)) return; // already pinned/cached — nothing to do
+      // Same gate as the on-demand detect: an untouched scratch project has
+      // nothing to serve. The prewarm fires 20 s after pairing, when a scratch
+      // workspace is ALWAYS still empty, and the one-shot bills a credits user's
+      // managed agent for an answer that is never cached ("unsupported"), so it
+      // was repaid on every box wake (2026-10-14, a PRO user's first Box).
+      if (isEmptyScratchProject(cwd)) return;
       const { raw } = await runDetectOneShot(generateOneShot);
       const detection = safeParseDetection(raw);
       if (!detection) {
