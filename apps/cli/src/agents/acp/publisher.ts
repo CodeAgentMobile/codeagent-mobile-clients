@@ -84,6 +84,47 @@ export function boundStreamingChunkContent(
   };
 }
 
+/**
+ * Byte budget for the `content` of one chat-pipe `text` frame
+ * (`/api/commands/output`). Every frame carries the CUMULATIVE reply, and
+ * api-v2 refused content over 256 KiB with a 413 — so once a reply crossed it,
+ * every later frame AND the terminal `done:true` were refused and the user saw
+ * nothing of the turn (2026-10-14: one opencode Box turn, 430 × 413, bodies
+ * 0.27 → 2.1 MB re-sent for 1.5 h). Kept under the server cap with headroom.
+ */
+export const CHAT_TEXT_MAX_BYTES = 192 * 1024;
+
+/** Second, smaller budget for the ONE retry of a terminal frame the server
+ *  still refused with 413 (an older or stricter backend). */
+export const CHAT_TEXT_FALLBACK_MAX_BYTES = 32 * 1024;
+
+/**
+ * Fit a reply under `maxBytes` UTF-8 bytes: keep the head and the tail (the
+ * newest text while streaming, the conclusion once the turn ends) and say in
+ * the middle that the rest was left out. Cuts on byte offsets and drops a
+ * code point split by the cut, so the result is valid UTF-8 and never over.
+ */
+export function boundChatText(
+  content: string,
+  maxBytes = CHAT_TEXT_MAX_BYTES,
+): { content: string; truncated: boolean } {
+  const bytes = Buffer.from(content, 'utf8');
+  if (bytes.length <= maxBytes) return { content, truncated: false };
+  const budget = Math.max(0, maxBytes - 256); // room for the marker
+  const headBytes = Math.floor(budget * 0.4);
+  const tailBytes = budget - headBytes;
+  const head = bytes.subarray(0, headBytes).toString('utf8').replace(/\uFFFD+$/, '');
+  const tail = bytes
+    .subarray(bytes.length - tailBytes)
+    .toString('utf8')
+    .replace(/^\uFFFD+/, '');
+  const omittedKb = Math.max(1, Math.round((bytes.length - headBytes - tailBytes) / 1024));
+  return {
+    content: `${head}\n\n… [${omittedKb} KB of this reply left out — too long to show in full] …\n\n${tail}`,
+    truncated: true,
+  };
+}
+
 export class AcpPublisher {
   private readonly apiBase: string;
   private token: string;
@@ -99,6 +140,10 @@ export class AcpPublisher {
    *  (2026-06-28 incident: a dead-token publisher spammed 401 ×34 while
    *  the agent's replies silently never reached the phone). */
   private pairingInvalid = false;
+  /** Set when the server refused a streaming `text` frame with 413: further
+   *  partial frames of the turn would be refused too, so they are dropped
+   *  until the next `new_turn` / `clear`. The terminal frame still goes. */
+  private oversizeTextTurn = false;
 
   constructor(private readonly opts: AcpPublisherOptions) {
     this.apiBase = opts.apiBaseUrl ?? resolveApiBaseUrl();
@@ -197,8 +242,31 @@ export class AcpPublisher {
    */
   async publishOutput(body: Record<string, unknown>): Promise<void> {
     const url = `${this.apiBase}/api/commands/output`;
+    const isText = body.type === 'text' && typeof body.content === 'string';
+    const isFinal = body.done === true;
+    if (body.type === 'new_turn' || body.type === 'clear') this.oversizeTextTurn = false;
+    if (isText && !isFinal && this.oversizeTextTurn) return;
+    if (isText) {
+      const bounded = boundChatText(body.content as string);
+      if (bounded.truncated) body = { ...body, content: bounded.content };
+    }
     try {
-      const { statusCode, body: resBody } = await this.postWithReauth(url, this.envelope(body));
+      let { statusCode, body: resBody } = await this.postWithReauth(url, this.envelope(body));
+      if (statusCode === 413 && isText) {
+        if (!isFinal) {
+          this.oversizeTextTurn = true;
+          log.warn('acpPublisher', 'output text frame refused 413 — dropping partial frames until the turn ends');
+          return;
+        }
+        // Terminal frame: ONE retry with a much smaller body, never a loop —
+        // the reply must land even on a backend with a stricter cap.
+        const fallback = boundChatText(body.content as string, CHAT_TEXT_FALLBACK_MAX_BYTES);
+        log.warn('acpPublisher', 'output done:true refused 413 — retrying once with a shortened reply');
+        ({ statusCode, body: resBody } = await this.postWithReauth(
+          url,
+          this.envelope({ ...body, content: fallback.content }),
+        ));
+      }
       if (statusCode < 200 || statusCode >= 300) {
         log.warn(
           'acpPublisher',
