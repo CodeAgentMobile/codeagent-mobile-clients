@@ -156,6 +156,11 @@ export async function requestCode(
  * Used by `start.ts` on every CLI boot for a resumed session. Returns
  * `null` on network failure or 404 — callers fall back to the
  * persisted token (steady state) rather than aborting.
+ *
+ * `onSessionGone` fires on a 404 `SESSION_NOT_FOUND`: the backend has no live
+ * row for this (sessionId, pluginId), i.e. the session was deleted from the app.
+ * A delete made while the host slept never reaches the host as a
+ * `session_terminated` command, so this is the only place it can learn it.
  */
 export async function fetchCurrentPluginAuthToken(
   sessionId: string,
@@ -165,6 +170,7 @@ export async function fetchCurrentPluginAuthToken(
    *  paired before `SavedSession.userId` existed learns its telemetry id — and
    *  the user's CURRENT plan (the saved one is frozen at pair time). */
   onUserId?: (userId: string, plan?: string) => void,
+  onSessionGone?: () => void,
 ): Promise<string | null> {
   try {
     const result = await _transport.postJson(
@@ -200,8 +206,22 @@ export async function fetchCurrentPluginAuthToken(
     }
     const token = data.pluginAuthToken;
     return typeof token === 'string' && token.length > 0 ? token : null;
-  } catch {
+  } catch (err) {
+    if (onSessionGone && isSessionNotFound(err)) onSessionGone();
     return null;
+  }
+}
+
+/** A 404 whose body carries the backend's `SESSION_NOT_FOUND` code. A bare 404
+ *  (a proxy, an older route) is NOT proof the session is gone. */
+function isSessionNotFound(err: unknown): boolean {
+  const e = err as { statusCode?: unknown; body?: unknown } | null;
+  if (!e || e.statusCode !== 404 || typeof e.body !== 'string') return false;
+  try {
+    const parsed = JSON.parse(e.body) as { code?: unknown; error?: { code?: unknown } } | null;
+    return parsed?.code === 'SESSION_NOT_FOUND' || parsed?.error?.code === 'SESSION_NOT_FOUND';
+  } catch {
+    return false;
   }
 }
 
