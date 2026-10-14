@@ -46,7 +46,7 @@ export interface AgentPreviewContext extends PreviewCtx {
 export type AgentPreviewResult =
   | { status: 'running'; url: string; framework: string; reused?: boolean; inspector: boolean }
   | { status: 'starting'; message: string }
-  | { status: 'error'; stage: string; message: string }
+  | { status: 'error'; stage: string; message: string; output?: string }
   | { status: 'idle' };
 
 /** Optional detection the agent may pass when it already knows how to start the app. */
@@ -82,6 +82,8 @@ export const AGENT_RESTART_WINDOW_MS = 10 * 60_000;
 
 const MAX_SELECTOR = 500;
 const MAX_LABEL = 80;
+/** How much of the dev server's output a failed start hands the agent. */
+export const AGENT_OUTPUT_TAIL = 2000;
 
 export class AgentPreviewBridge {
   private server: http.Server | null = null;
@@ -90,7 +92,7 @@ export class AgentPreviewBridge {
   private ctx: AgentPreviewContext | null = null;
   /** The bring-up in flight, so two tool calls never start two dev servers. */
   private inflight: Promise<AgentPreviewResult> | null = null;
-  private lastError: { stage: string; message: string } | null = null;
+  private lastError: { stage: string; message: string; output?: string } | null = null;
   private bound: { url: string; token: string } | null = null;
   /** When the agent tore the preview down, per session (see MAX_AGENT_RESTARTS). */
   private readonly restarts = new Map<string, number[]>();
@@ -324,14 +326,19 @@ export class AgentPreviewBridge {
       return { status: 'error', ...err };
     }
 
-    let failure: { stage: string; message: string } | null = null;
+    let failure: { stage: string; message: string; output?: string } | null = null;
     await startPreviewFromDetection(ctx, detection, pluginAuthToken, {
       origin: 'agent',
       onEvent: (type, payload) => {
         if (type === USER_EVENTS.PREVIEW_ERROR) {
+          // The dev server's own last words. Without them the agent read only
+          // "exited (code 1) … may need a database" for `serve --port` (serve
+          // takes --listen) and never fixed its command (erlynfaye, 2026-10-14).
+          const output = String(payload.stderrTail ?? '').trim().slice(-AGENT_OUTPUT_TAIL);
           failure = {
             stage: String(payload.stage ?? 'spawn'),
             message: String(payload.message ?? 'The preview failed to start.'),
+            ...(output ? { output } : {}),
           };
         }
       },

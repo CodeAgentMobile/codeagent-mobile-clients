@@ -184,8 +184,13 @@ function describeResult(raw: unknown): { text: string; isError: boolean } {
         // The agent once answered a failed spawn with "the preview is open, here
         // is the link" (2026-10-05). Say plainly that nothing is serving.
         text:
-          `Preview failed at ${String(r.stage)}: ${String(r.message)}. The preview is NOT running — do not give ` +
-          'the user a preview link; tell them what failed.',
+          `Preview failed at ${String(r.stage)}: ${String(r.message).replace(/\.+$/, '')}. The preview is NOT running — ` +
+          'do not give the user a preview link.' +
+          (r.output
+            ? ` The dev server's last output:\n\`\`\`\n${String(r.output)}\n\`\`\`\nIf it shows a mistake in the ` +
+              'command (a wrong flag, a missing file), call start_preview again with the fixed command; ' +
+              'otherwise tell the user what failed.'
+            : ' Tell the user what failed.'),
         isError: true,
       };
     default:

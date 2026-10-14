@@ -78,6 +78,21 @@ describe('runPreviewTool', () => {
     expect(r.text).not.toMatch(/https?:\/\/|localhost/);
   });
 
+  it("a failed start shows the agent the dev server's output and invites a fixed retry", async () => {
+    const call = vi.fn().mockResolvedValue({
+      status: 'error',
+      stage: 'spawn',
+      message: 'The dev server exited (code 1) before it was ready. It may need a database or other services.',
+      output: 'ArgError: unknown or unexpected option: --port',
+    });
+    const r = await runPreviewTool('start_preview', { command: 'npx', args: ['serve', '--port', '5173'], port: 5173 }, call);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('other services. The preview is NOT running');
+    expect(r.text).not.toContain('..');
+    expect(r.text).toContain('unknown or unexpected option: --port');
+    expect(r.text).toMatch(/call start_preview again with the fixed command/);
+  });
+
   it('start_preview accepts a cwd and tells the agent a localhost link never opens on the phone', () => {
     const tool = PREVIEW_TOOLS.find((t) => t.name === 'start_preview');
     const props = (tool?.inputSchema as { properties: Record<string, unknown> }).properties;
