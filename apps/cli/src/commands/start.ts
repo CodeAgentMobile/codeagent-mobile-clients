@@ -6,6 +6,7 @@ import {
   getActiveSessionForAgent,
   ensurePluginId,
   loadCliConfig,
+  removeSession,
   type SavedSession,
 } from '../config';
 import { acquireDaemonLock } from './pair-auto';
@@ -202,6 +203,7 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
   // sessions working unchanged.
   let reconnectUserId: string | undefined;
   let reconnectPlan: string | undefined;
+  let sessionGone = false;
   const refreshed = await fetchCurrentPluginAuthToken(
     session.id,
     pluginId,
@@ -210,7 +212,25 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
       reconnectUserId = userId;
       reconnectPlan = plan;
     },
+    () => {
+      sessionGone = true;
+    },
   );
+  // ⚠️ The session was deleted from the app while this host was asleep, so the
+  // `session_terminated` command never reached it. Resuming it anyway ran a
+  // zombie agent that heartbeated forever while every session-scoped call
+  // answered 404/410, on every wake of the box/codespace (codeagent-xwoy,
+  // 2026-10-14). Do what `session_terminated` does: forget it and exit 0, so the
+  // host-agent neither retries it now nor resumes it on its next boot.
+  if (sessionGone) {
+    showInfo('This session was deleted from the app — not resuming it.');
+    try {
+      removeSession(session.id);
+    } catch {
+      /* best-effort */
+    }
+    process.exit(0);
+  }
   if (refreshed && refreshed !== session.pluginAuthToken) {
     addSession({ ...session, pluginAuthToken: refreshed });
     session.pluginAuthToken = refreshed;

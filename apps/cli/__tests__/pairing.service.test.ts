@@ -145,6 +145,33 @@ describe('fetchCurrentPluginAuthToken', () => {
     expect(onUserId).toHaveBeenCalledWith('usr_42', 'pro');
   });
 
+  // codeagent-xwoy: a delete made while the host slept is learned here.
+  function httpError(statusCode: number, body: string) {
+    return Object.assign(new Error(`HTTP ${statusCode}`), { statusCode, body });
+  }
+
+  it('calls onSessionGone on a 404 SESSION_NOT_FOUND (deleted from the app)', async () => {
+    vi.spyOn(pairing._transport, 'postJson').mockRejectedValue(
+      httpError(404, JSON.stringify({ success: false, error: { code: 'SESSION_NOT_FOUND', message: 'x' } })),
+    );
+    const onSessionGone = vi.fn();
+    const token = await pairing.fetchCurrentPluginAuthToken('s', 'p', undefined, undefined, onSessionGone);
+    expect(token).toBeNull();
+    expect(onSessionGone).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a bare 404 with no code', httpError(404, 'Not Found')],
+    ['a 404 with another code', httpError(404, JSON.stringify({ error: { code: 'NOT_FOUND' } }))],
+    ['a 5xx', httpError(503, JSON.stringify({ error: { code: 'SESSION_NOT_FOUND' } }))],
+    ['a network failure', new Error('socket hang up')],
+  ])('does not call onSessionGone on %s', async (_label, err) => {
+    vi.spyOn(pairing._transport, 'postJson').mockRejectedValue(err);
+    const onSessionGone = vi.fn();
+    expect(await pairing.fetchCurrentPluginAuthToken('s', 'p', undefined, undefined, onSessionGone)).toBeNull();
+    expect(onSessionGone).not.toHaveBeenCalled();
+  });
+
   it('does not call onUserId when the backend omits userId', async () => {
     vi.spyOn(pairing._transport, 'postJson').mockResolvedValue({
       data: { paired: true, pluginAuthToken: 'v1.t' },
