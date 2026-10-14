@@ -43,14 +43,23 @@ Rules:
   otherwise "python3".
 - Prefer binding to 0.0.0.0 — most frameworks default to localhost which the tunnel cannot reach.
 - For Expo: framework="Expo", command="npx", args=["expo","start","--tunnel"], port=8081, notes="Scan QR with Expo Go".
+- For PHP (composer.json / index.php): use PHP's built-in server bound to 0.0.0.0 with the
+  web root as docroot — command="php", args=["-S","0.0.0.0:8080","-t","public"] (Yii3,
+  Symfony, Slim, Mezzio; use the real docroot, e.g. "web" for Yii2, "." for plain PHP),
+  port=8080, ready_pattern="Development Server". Laravel: command="php",
+  args=["artisan","serve","--host=0.0.0.0","--port=8000"], port=8000,
+  ready_pattern="Server running". Do NOT use "composer serve", "symfony serve" or a
+  "./yii serve" wrapper — call php directly.
 - If no dev server applies (CLI library, lambda, batch script): {"framework":"unsupported","notes":"<reason>"}.
 
 CRITICAL — setup_commands:
 - DO NOT include an install command (npm install, pnpm install, yarn install,
-  yarn, bun install) in setup_commands. A lockfile-aware pre-flight installer
-  runs BEFORE setup_commands and picks the correct package manager from the
-  lockfile present (pnpm-lock.yaml -> pnpm, yarn.lock -> yarn, bun.lockb -> bun,
-  else npm). Emitting an install here either duplicates that work or, worse,
+  yarn, bun install, composer install) in setup_commands. Pre-flight installers
+  run BEFORE setup_commands: composer install whenever composer.json exists and
+  vendor/ is missing, and a lockfile-aware Node installer that picks the
+  correct package manager from the lockfile present (pnpm-lock.yaml -> pnpm,
+  yarn.lock -> yarn, bun.lockb -> bun, else npm). Emitting an install here
+  either duplicates that work or, worse,
   uses the WRONG package manager on top of node_modules just populated by the
   pre-flight, which crashes (e.g. npm errors with "Cannot read properties of
   null (reading 'matches')" when run over pnpm's .pnpm/ layout).

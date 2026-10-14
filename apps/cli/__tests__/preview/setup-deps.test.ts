@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import {
   detectMissingNodeDeps,
+  detectMissingPhpDeps,
   ensureYarnInstalled,
+  isComposerInstallCommand,
   isJsInstallCommand,
 } from '../../src/services/preview/setup-deps';
 
@@ -148,5 +150,59 @@ describe('isJsInstallCommand', () => {
     ['python', ['-m', 'pip', 'install', '-r', 'requirements.txt']],
   ])('does not detect %s %s as an install command', (cmd, args) => {
     expect(isJsInstallCommand(cmd, args as string[])).toBe(false);
+  });
+});
+
+describe('detectMissingPhpDeps', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-php-deps-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns null when there is no composer.json (not a Composer project)', () => {
+    fs.writeFileSync(path.join(dir, 'index.php'), '<?php echo 1;');
+    expect(detectMissingPhpDeps(dir)).toBeNull();
+  });
+
+  it('returns null when vendor/ already exists (trust it)', () => {
+    fs.writeFileSync(path.join(dir, 'composer.json'), '{}');
+    fs.mkdirSync(path.join(dir, 'vendor'));
+    expect(detectMissingPhpDeps(dir)).toBeNull();
+  });
+
+  // The Yii3 report (imaginer740, 2026-10-09): a fresh clone has composer.json
+  // and no vendor/, so php -S would boot an app with no autoloader.
+  it('returns a non-interactive composer install when vendor/ is missing', () => {
+    fs.writeFileSync(path.join(dir, 'composer.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'composer.lock'), '{}');
+    expect(detectMissingPhpDeps(dir)).toEqual({
+      cmd: 'composer',
+      args: [
+        'install',
+        '--no-interaction',
+        '--no-progress',
+        '--prefer-dist',
+        '--ignore-platform-req=ext-*',
+      ],
+    });
+  });
+});
+
+describe('isComposerInstallCommand', () => {
+  it('matches composer install / composer i', () => {
+    expect(isComposerInstallCommand('composer', ['install'])).toBe(true);
+    expect(isComposerInstallCommand('composer', ['i', '--no-dev'])).toBe(true);
+  });
+
+  it('does not match other composer verbs or other tools', () => {
+    expect(isComposerInstallCommand('composer', ['dump-autoload'])).toBe(false);
+    expect(isComposerInstallCommand('composer', [])).toBe(false);
+    expect(isComposerInstallCommand('npm', ['install'])).toBe(false);
+    expect(isComposerInstallCommand('php', ['yii', 'migrate'])).toBe(false);
   });
 });

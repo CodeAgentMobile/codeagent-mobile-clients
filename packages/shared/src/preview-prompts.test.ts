@@ -27,4 +27,11 @@ describe('PREVIEW_DETECT_PROMPT', () => {
   it('instructs JSON-only output', () => {
     expect(PREVIEW_DETECT_PROMPT).toContain('OUTPUT JSON ONLY');
   });
+
+  it('tells the agent how to serve a PHP project and not to emit composer install', () => {
+    expect(PREVIEW_DETECT_PROMPT).toContain('composer.json');
+    expect(PREVIEW_DETECT_PROMPT).toContain('"-S","0.0.0.0:8080","-t","public"');
+    expect(PREVIEW_DETECT_PROMPT).toContain('Development Server');
+    expect(PREVIEW_DETECT_PROMPT).toMatch(/DO NOT include an install command[^]*composer install/);
+  });
 });

@@ -447,6 +447,42 @@ function announceReady(ctx: StageCtx, dev: DevServerUp, tun: TunnelUp): void {
 }
 
 /**
+ * Run one lockfile-derived pre-flight install (npm/yarn for `node_modules/`,
+ * composer for `vendor/`) under the install budget. Returns `false` after
+ * emitting the terminal `preview_error` when it timed out or failed.
+ */
+async function runPreflightInstall(
+  ctx: StageCtx,
+  install: { cmd: string; args: string[] },
+  why: string,
+): Promise<boolean> {
+  const { detection, cwd, emit, emitProgress } = ctx;
+  const label = `${install.cmd} ${install.args.join(' ')}`;
+  emitProgress('SETUP_RUN', `${label} (pre-flight — ${why})`);
+  const result = await previewSvc.runSetupCommand(install.cmd, install.args, cwd, detection.env, {
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  if (result.status === 'timeout') {
+    // The hang BUG 1 guards against: a fresh codespace with no deps stalls
+    // the install → the dev server never spawns → the user waits on the
+    // spinner forever. Bound it and emit an error so mobile leaves the spinner.
+    emit(USER_EVENTS.PREVIEW_ERROR, {
+      stage: 'ready_timeout',
+      message: `Dependency install (${label}) didn't finish within ${Math.round(INSTALL_TIMEOUT_MS / 1000)}s and was stopped. Run it manually in this project, then try the preview again.`,
+    });
+    return false;
+  }
+  if (result.status === 'failed') {
+    emit(USER_EVENTS.PREVIEW_ERROR, {
+      stage: 'spawn',
+      message: `Dependency install failed (${label}, exit ${result.code}). Run it manually in this project and try again.`,
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
  * Stage 1 — dependency provisioning. The lockfile-aware Node-deps
  * pre-flight plus the agent's `setup_commands` (with the double-install
  * guard). Returns `false` when the pipeline must stop — the failure
@@ -509,36 +545,28 @@ async function provisionDeps(ctx: StageCtx): Promise<boolean> {
         return false;
       }
     }
-    emitProgress(
-      'SETUP_RUN',
-      `${missingDeps.cmd} ${missingDeps.args.join(' ')} (pre-flight — node_modules missing)`,
-    );
-    const result = await previewSvc.runSetupCommand(
-      missingDeps.cmd,
-      missingDeps.args,
-      cwd,
-      detection.env,
-      { timeoutMs: INSTALL_TIMEOUT_MS },
-    );
-    if (result.status === 'timeout') {
-      // The hang BUG 1 guards against: a fresh codespace with no
-      // node_modules stalls the install → the dev server never
-      // spawns → the user waits on the spinner forever. Bound it and
-      // emit an error so mobile leaves the spinner.
-      emit(USER_EVENTS.PREVIEW_ERROR, {
-        stage: 'ready_timeout',
-        message: `Dependency install (${missingDeps.cmd} ${missingDeps.args.join(' ')}) didn't finish within ${Math.round(INSTALL_TIMEOUT_MS / 1000)}s and was stopped. Run it manually in this project, then try the preview again.`,
-      });
-      return false;
-    }
-    if (result.status === 'failed') {
+    if (!(await runPreflightInstall(ctx, missingDeps, 'node_modules missing'))) return false;
+    preflightRan = true;
+  }
+
+  // 0b. Same pre-flight for PHP: `composer.json` without `vendor/` →
+  //     `composer install`, or the first request fatals on a missing
+  //     `vendor/autoload.php`. The Box/codespace image bakes php + composer;
+  //     elsewhere composer may be absent, and a PHP app can't boot without
+  //     its vendor tree, so say exactly that instead of spawning ENOENT.
+  const missingPhpDeps = previewSvc.detectMissingPhpDeps(cwd);
+  let composerPreflightRan = false;
+  if (missingPhpDeps) {
+    if (!(await which('composer', { nothrow: true }))) {
       emit(USER_EVENTS.PREVIEW_ERROR, {
         stage: 'spawn',
-        message: `Dependency install failed (${missingDeps.cmd} ${missingDeps.args.join(' ')}, exit ${result.code}). Run it manually in this project and try again.`,
+        message:
+          "This is a PHP project (composer.json) but Composer isn't installed in this environment, so its dependencies (vendor/) can't be installed. Install PHP and Composer, then try the preview again.",
       });
       return false;
     }
-    preflightRan = true;
+    if (!(await runPreflightInstall(ctx, missingPhpDeps, 'vendor/ missing'))) return false;
+    composerPreflightRan = true;
   }
 
   // 1. Setup commands from the agent — but skip any install command
@@ -573,17 +601,21 @@ async function provisionDeps(ctx: StageCtx): Promise<boolean> {
       };
     })
     .filter((s) => s.cmd.length > 0);
-  const agentSetupCommands = preflightRan
-    ? normalizedSetup.filter((s) => !previewSvc.isJsInstallCommand(s.cmd, s.args))
-    : normalizedSetup;
+  const agentSetupCommands = normalizedSetup.filter(
+    (s) =>
+      !(preflightRan && previewSvc.isJsInstallCommand(s.cmd, s.args)) &&
+      !(composerPreflightRan && previewSvc.isComposerInstallCommand(s.cmd, s.args)),
+  );
   for (const setup of agentSetupCommands) {
     emitProgress('SETUP_RUN', `${setup.cmd} ${setup.args.join(' ')}`);
     // An install command (the agent may emit one for a project the
     // pre-flight didn't cover) gets the generous install budget; a
     // codegen/prebuild step gets the tighter one.
-    const timeoutMs = previewSvc.isJsInstallCommand(setup.cmd, setup.args)
-      ? INSTALL_TIMEOUT_MS
-      : SETUP_TIMEOUT_MS;
+    const timeoutMs =
+      previewSvc.isJsInstallCommand(setup.cmd, setup.args) ||
+      previewSvc.isComposerInstallCommand(setup.cmd, setup.args)
+        ? INSTALL_TIMEOUT_MS
+        : SETUP_TIMEOUT_MS;
     const result = await previewSvc.runSetupCommand(setup.cmd, setup.args, cwd, detection.env, {
       timeoutMs,
     });
