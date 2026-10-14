@@ -179,7 +179,12 @@ export class CodexRuntimeStrategy implements RuntimeStrategy {
     // current turn.
     const binary = this.os.findInPath('codex');
     if (!binary) return null;
-    const launch = this.os.buildLaunch(binary, ['exec', prompt]);
+    // `--skip-git-repo-check`: outside a git repo (a local `codeam start` in a
+    // plain folder) `codex exec` refuses in ~1 s with "Not inside a trusted
+    // directory…" and prints nothing — every Preview detect / AI summary on
+    // such a session failed as `no_output` while the chat (codex-acp, no such
+    // check) worked fine (codeagent-nczt.9). The one-shot only reads.
+    const launch = this.os.buildLaunch(binary, ['exec', '--skip-git-repo-check', prompt]);
     const runOnce = (): Promise<{ text: string | null; stderr: string }> => {
       let stderr = '';
       return spawnAndCapture(launch.cmd, launch.args, {
