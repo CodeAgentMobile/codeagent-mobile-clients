@@ -162,8 +162,9 @@ export async function fetchCurrentPluginAuthToken(
   pluginId: string,
   pollSecret?: string,
   /** Receives the backend user id the reconnect answers with — how a session
-   *  paired before `SavedSession.userId` existed learns its telemetry id. */
-  onUserId?: (userId: string) => void,
+   *  paired before `SavedSession.userId` existed learns its telemetry id — and
+   *  the user's CURRENT plan (the saved one is frozen at pair time). */
+  onUserId?: (userId: string, plan?: string) => void,
 ): Promise<string | null> {
   try {
     const result = await _transport.postJson(
@@ -190,7 +191,12 @@ export async function fetchCurrentPluginAuthToken(
     const data = result?.data as Record<string, unknown> | undefined;
     if (!data?.paired) return null;
     if (onUserId && typeof data.userId === 'string' && data.userId.length > 0) {
-      onUserId(data.userId);
+      const user = data.user;
+      const plan =
+        typeof user === 'object' && user !== null && 'plan' in user && typeof user.plan === 'string'
+          ? user.plan
+          : undefined;
+      onUserId(data.userId, plan);
     }
     const token = data.pluginAuthToken;
     return typeof token === 'string' && token.length > 0 ? token : null;

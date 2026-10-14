@@ -132,7 +132,17 @@ describe('fetchCurrentPluginAuthToken', () => {
     const onUserId = vi.fn();
 
     await pairing.fetchCurrentPluginAuthToken('sess-1', 'plugin-1', undefined, onUserId);
-    expect(onUserId).toHaveBeenCalledWith('usr_42');
+    expect(onUserId).toHaveBeenCalledWith('usr_42', undefined);
+  });
+
+  it('hands the CURRENT plan too, so a session paired on FREE stops reporting free after an upgrade', async () => {
+    vi.spyOn(pairing._transport, 'postJson').mockResolvedValue({
+      data: { paired: true, userId: 'usr_42', pluginAuthToken: 'v1.t', user: { plan: 'pro' } },
+    } as never);
+    const onUserId = vi.fn();
+
+    await pairing.fetchCurrentPluginAuthToken('sess-1', 'plugin-1', undefined, onUserId);
+    expect(onUserId).toHaveBeenCalledWith('usr_42', 'pro');
   });
 
   it('does not call onUserId when the backend omits userId', async () => {

@@ -201,12 +201,14 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
   // persisted token on lookup failure keeps offline / flaky-net
   // sessions working unchanged.
   let reconnectUserId: string | undefined;
+  let reconnectPlan: string | undefined;
   const refreshed = await fetchCurrentPluginAuthToken(
     session.id,
     pluginId,
     session.pollSecret,
-    (userId) => {
+    (userId, plan) => {
       reconnectUserId = userId;
+      reconnectPlan = plan;
     },
   );
   if (refreshed && refreshed !== session.pluginAuthToken) {
@@ -220,8 +222,14 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
     showInfo('Reconnected previous session.');
   }
   // Backfill the telemetry id on a session paired before it was persisted.
-  if (reconnectUserId && reconnectUserId !== session.userId) {
-    session.userId = reconnectUserId;
+  // Same for the plan: the saved one is what the user had when this session
+  // paired. A user who went PRO later was identified as `free` on every boot of
+  // an older session, flipping their PostHog person back (hasbullah, 2026-10-12).
+  const staleUserId = !!reconnectUserId && reconnectUserId !== session.userId;
+  const stalePlan = !!reconnectPlan && reconnectPlan !== session.plan;
+  if (staleUserId || stalePlan) {
+    if (reconnectUserId) session.userId = reconnectUserId;
+    if (reconnectPlan) session.plan = reconnectPlan;
     addSession({ ...session });
   }
 

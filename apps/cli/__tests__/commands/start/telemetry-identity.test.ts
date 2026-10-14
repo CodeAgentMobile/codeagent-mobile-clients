@@ -172,6 +172,16 @@ describe('start() telemetry identity', () => {
     expect(addSession).toHaveBeenCalledWith(expect.objectContaining({ userId: 'usr_from_reconnect' }));
   }, 30_000);
 
+  it('identifies with the CURRENT plan from /reconnect, not the one saved at pair time', async () => {
+    vi.mocked(fetchCurrentPluginAuthToken).mockImplementation(async (_s, _p, _sec, onUserId) => {
+      onUserId?.('usr_1', 'pro');
+      return null;
+    });
+    await expect(boot({ userId: 'usr_1', plan: 'free' })).rejects.toThrow('SENTINEL_SPAWN');
+    expect(vi.mocked(identifyUser).mock.calls[0][0]).toMatchObject({ userId: 'usr_1', plan: 'pro' });
+    expect(addSession).toHaveBeenCalledWith(expect.objectContaining({ plan: 'pro' }));
+  }, 30_000);
+
   it('stays anonymous (no identify) when no user id is known — never falls back to the email', async () => {
     await expect(boot({})).rejects.toThrow('SENTINEL_SPAWN');
     expect(identifyUser).not.toHaveBeenCalled();
