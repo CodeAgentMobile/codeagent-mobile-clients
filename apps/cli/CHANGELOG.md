@@ -4,6 +4,21 @@ All notable changes to `codeam-cli` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.30] — 2026-10-14
+
+### CI
+
+- **release:** Build the Box image only after npm serves the version
+
+### Documentation
+
+- **release:** Describe the next → canary → latest release gate in the README
+
+### Fixed
+
+- **cli:** Preview prewarm skips an empty scratch project
+- **cli:** Identify with the current plan from /reconnect, not the pair-time one
+
 ## [2.76.29] — 2026-10-13
 
 ### Fixed
