@@ -4,6 +4,13 @@ All notable changes to the CodeAgent-Mobile JetBrains plugin are documented here
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.33] — 2026-10-14
+
+### Added
+
+- **box:** Bake PHP CLI + Composer into the Box image
+- **cli:** Composer pre-flight + PHP guidance for in-app Preview
+
 ## [2.76.32] — 2026-10-14
 
 ### Fixed
