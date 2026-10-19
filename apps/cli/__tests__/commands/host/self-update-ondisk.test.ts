@@ -246,3 +246,35 @@ describe('runSelfUpdate — follows the npm `latest` dist-tag only', () => {
     expect(views).toEqual([['view', 'codeam-cli', 'version']]);
   });
 });
+
+describe('runSelfUpdate — GC on an up-to-date tick', () => {
+  // The GC right after an install can never collect the version just left (its
+  // supervisor and sessions are still running), and nothing retried it: a
+  // long-lived Box held 17 versions, 10.5 GB, on 2026-10-19.
+  it.skipIf(posixOnly)('removes old, unused versions when there is nothing to install', async () => {
+    const d = deps({ run: fakeInstallRun('2.65.16', '2.65.16') });
+    const root = d.versionsRoot!;
+    for (const v of ['2.65.10', '2.65.11', '2.65.12', '2.65.13', '2.65.14', '2.65.15', '2.65.16']) {
+      const pkg = path.join(root, v, 'node_modules', 'codeam-cli');
+      fs.mkdirSync(path.join(pkg, 'dist'), { recursive: true });
+      fs.writeFileSync(
+        path.join(pkg, 'package.json'),
+        JSON.stringify({ name: 'codeam-cli', version: v, bin: { codeam: 'dist/index.js' } }),
+      );
+      fs.writeFileSync(path.join(pkg, 'dist', 'index.js'), `// ${v}\n`);
+    }
+    switchCurrent(root, path.join(root, '2.65.10'));
+    switchCurrent(root, path.join(root, '2.65.16'));
+
+    const res = await runSelfUpdateWith(d);
+
+    expect(res).toEqual({ status: 'current' });
+    expect(
+      fs
+        .readdirSync(root)
+        .filter((n) => /^\d/.test(n))
+        .sort(),
+    ).toEqual(['2.65.10', '2.65.14', '2.65.15', '2.65.16']); // previous + the 3 newest
+    expect(fs.existsSync(path.join(root, '.install.lock'))).toBe(false);
+  });
+});

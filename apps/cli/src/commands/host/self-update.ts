@@ -322,6 +322,7 @@ export async function runSelfUpdateWith(deps: SelfUpdateDeps): Promise<SelfUpdat
     // Only update on a strictly-newer published version.
     if (compareSemver(latest, current) <= 0) {
       log.info('host-agent', `self-update: running ${current}, npm latest ${latest} — up to date`);
+      if (versionedModeSupported(deps.platform)) collectOldVersions(root);
       return { status: 'current' };
     }
 
@@ -338,6 +339,26 @@ export async function runSelfUpdateWith(deps: SelfUpdateDeps): Promise<SelfUpdat
       `self-update: unexpected error: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { status: 'skipped' };
+  }
+}
+
+/**
+ * GC on every up-to-date tick, not only after an install. Right after an
+ * install the version just left is still running (the supervisor and its
+ * sessions restart onto the new one only afterwards), so that GC can never
+ * collect it, and with no further release nothing retried: a long-lived Box on
+ * fleet-1 held 17 versions × ~620 MB = 10.5 GB on 2026-10-19. Under the install
+ * lock so it never races another host-agent's install.
+ */
+export function collectOldVersions(root: string): string[] {
+  const release = acquireInstallLock(root);
+  if (!release) return [];
+  try {
+    const removed = gcVersions(root);
+    if (removed.length) log.info('host-agent', `self-update: gc removed ${removed.join(', ')}`);
+    return removed;
+  } finally {
+    release();
   }
 }
 
