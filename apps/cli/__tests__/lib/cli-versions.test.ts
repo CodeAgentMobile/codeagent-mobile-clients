@@ -8,6 +8,8 @@ import {
   entryOf,
   launcherOf,
   gcVersions,
+  livePids,
+  processStartMs,
   hostEntry,
   isBad,
   markBad,
@@ -24,6 +26,8 @@ import { installVersioned, type SelfUpdateDeps } from '../../src/commands/host/s
 // the tests that build real `current`/`previous` symlinks skip on win32 rather
 // than exercising a code path production never takes there.
 const posixOnly = process.platform === 'win32';
+/** The recycled-pid guard reads /proc, so it only engages on Linux. */
+const onLinux = process.platform === 'linux';
 
 /**
  * Side-by-side codeam-cli installs (codeagent-siec). The old self-update ran
@@ -227,6 +231,33 @@ describe('gcVersions', () => {
     for (const kept of [live, prev, cur]) expect(fs.existsSync(kept)).toBe(true);
     // 3 newest: 2.76.10, 2.76.9, 2.76.8
     expect(fs.existsSync(path.join(root, '2.76.8'))).toBe(true);
+  });
+
+  // A Box restarts its pid namespace on every wake, so a pid file left by a
+  // killed process can name an UNRELATED live process later (fleet-1,
+  // 2026-10-19: 2.76.12's stale pids 132/133 were alive again as other
+  // processes). The registering process wrote its own file, so a process that
+  // started AFTER the file was written is a recycled pid.
+  it.skipIf(!onLinux)('treats a pid that started after its pid file was written as recycled', () => {
+    fakeVersion('2.76.7');
+    fakeVersion('2.76.8');
+    fakeVersion('2.76.9');
+    const recycled = fakeVersion('2.76.4');
+    const file = path.join(recycled, '.pids', String(process.pid));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '');
+    const longAgo = new Date('2001-01-01T00:00:00Z');
+    fs.utimesSync(file, longAgo, longAgo);
+
+    expect(livePids(recycled)).toEqual([]);
+    expect(gcVersions(root)).toEqual(['2.76.4']);
+  });
+
+  it.skipIf(!onLinux)('reads a real process start time from /proc', () => {
+    const started = processStartMs(process.pid);
+    expect(started).not.toBeNull();
+    expect(started!).toBeLessThanOrEqual(Date.now() + 2_000);
+    expect(started!).toBeGreaterThan(Date.now() - 24 * 60 * 60_000);
   });
 });
 

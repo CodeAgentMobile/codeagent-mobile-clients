@@ -279,15 +279,56 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** Pids recorded under `<versionDir>/.pids` that are still alive. */
+/** USER_HZ: `/proc/<pid>/stat` start times are in these ticks on every Linux ABI. */
+const CLK_TCK = 100;
+
+/**
+ * Linux: when process `pid` started (ms since epoch), from `/proc/<pid>/stat`
+ * field 22 + `/proc/stat` btime. Null anywhere else, or if unreadable.
+ */
+export function processStartMs(pid: number): number | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // comm (field 2) may hold spaces and parens; field 3 starts after the LAST ')'.
+    const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+    const btime = /^btime (\d+)$/m.exec(fs.readFileSync('/proc/stat', 'utf8'))?.[1];
+    if (!Number.isFinite(ticks) || !btime) return null;
+    return Number(btime) * 1000 + (ticks * 1000) / CLK_TCK;
+  } catch {
+    return null;
+  }
+}
+
+/** Slack for btime's whole-second rounding: a doubtful pid stays alive. */
+const PID_REUSE_SLACK_MS = 2_000;
+
+/**
+ * Pids recorded under `<versionDir>/.pids` that are still alive.
+ *
+ * ⚠️ A pid file whose process died without its exit hook (a container stop,
+ * SIGKILL) stays behind, and a Box restarts its pid namespace on every wake,
+ * so the same low pids come back as UNRELATED processes. Each pid file is
+ * written by its own process, so a process that STARTED after its file was
+ * written is a recycled pid, not the one that registered.
+ */
 export function livePids(versionDir: string): number[] {
+  const dir = path.join(versionDir, '.pids');
   let names: string[];
   try {
-    names = fs.readdirSync(path.join(versionDir, '.pids'));
+    names = fs.readdirSync(dir);
   } catch {
     return [];
   }
-  return names.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0 && pidAlive(pid));
+  return names.map(Number).filter((pid) => {
+    if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) return false;
+    const started = processStartMs(pid);
+    if (started === null) return true;
+    try {
+      return started <= fs.statSync(path.join(dir, String(pid))).mtimeMs + PID_REUSE_SLACK_MS;
+    } catch {
+      return true;
+    }
+  });
 }
 
 /**
