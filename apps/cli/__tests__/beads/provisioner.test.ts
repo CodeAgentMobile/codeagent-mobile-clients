@@ -569,6 +569,100 @@ describe('provisionBeads', () => {
     // bd never resolved → no PATH symlink attempt.
     expect(_provisionSeam.linkBdOntoPath).not.toHaveBeenCalled();
   });
+
+  describe('schema migrate (DB written by an older bd)', () => {
+    const idx = (prefix: string): number =>
+      fake.calls.findIndex((c) => c.join(' ').startsWith(prefix));
+
+    it('runs `bd migrate schema` after the server is up and before ping, export.auto and agent setup', async () => {
+      const res = await provisionBeads({
+        adapter: fake as never,
+        beadsDir: '/tmp/hb',
+        agents: ['claude'],
+      });
+      const migrate = idx('migrate schema');
+      expect(migrate).toBeGreaterThan(idx('init -p'));
+      expect(migrate).toBeLessThan(idx('ping'));
+      expect(migrate).toBeLessThan(idx('config set export.auto'));
+      expect(migrate).toBeLessThan(idx('setup claude'));
+      expect(res.schemaMigrate).toEqual({ status: 'current' });
+    });
+
+    it('heals a skewed DB in place: ping passes after migrate, so the self-heal never bootstraps or mints', async () => {
+      let migrated = false;
+      fake.run = async (args: string[]): Promise<BdRunResult> => {
+        fake.calls.push(args);
+        if (args[0] === 'migrate') {
+          migrated = true;
+          return {
+            code: 0,
+            stdout: '✓ Schema already at v66',
+            stderr: 'Warning: applying 13 pending schema migration(s) to a shared server database',
+          };
+        }
+        if (args[0] === 'ping' && !migrated) {
+          return { code: 1, stdout: '', stderr: 'Error 1146 (HY000): table not found: leases' };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      const res = await provisionBeads({ adapter: fake as never, beadsDir: '/tmp/hb' });
+      expect(res.schemaMigrate).toEqual({ status: 'applied', count: 13, forced: false });
+      expect(ran(fake, 'bootstrap')).toBe(0);
+      expect(fake.calls.some((c) => c.includes('--reinit-local'))).toBe(false);
+      expect(res.serverUp).toBe(true);
+      expect(res.exportEnabled).toBe(true);
+    });
+
+    it('a failed migrate is NON-FATAL (export + agent wiring still run)', async () => {
+      fake.setCode('migrate schema', 1);
+      const res = await provisionBeads({
+        adapter: fake as never,
+        beadsDir: '/tmp/hb',
+        agents: ['claude'],
+      });
+      expect(res.schemaMigrate?.status).toBe('failed');
+      expect(res.exportEnabled).toBe(true);
+      expect(ran(fake, 'setup claude')).toBeGreaterThan(0);
+    });
+
+    it('a thrown migrate is NON-FATAL', async () => {
+      const run = fake.run.bind(fake);
+      fake.run = async (args: string[], o?: { cwd?: string }): Promise<BdRunResult> => {
+        if (args[0] === 'migrate') throw new Error('spawn exploded');
+        return run(args, o);
+      };
+      const res = await provisionBeads({ adapter: fake as never, beadsDir: '/tmp/hb' });
+      expect(res.schemaMigrate?.status).toBe('failed');
+      expect(res.exportEnabled).toBe(true);
+    });
+
+    it('migrates again after a successful bd bootstrap (the clone may carry an older schema)', async () => {
+      let dbPresent = false;
+      fake.run = async (args: string[]): Promise<BdRunResult> => {
+        fake.calls.push(args);
+        if (args[0] === 'ping') {
+          return dbPresent
+            ? { code: 0, stdout: '', stderr: '' }
+            : { code: 1, stdout: '', stderr: 'database not found' };
+        }
+        if (args[0] === 'bootstrap') dbPresent = true;
+        return { code: 0, stdout: '', stderr: '' };
+      };
+      await provisionBeads({ adapter: fake as never, beadsDir: '/tmp/hb' });
+      const migrates = fake.calls
+        .map((c, i) => (c[0] === 'migrate' ? i : -1))
+        .filter((i) => i >= 0);
+      expect(migrates).toHaveLength(2);
+      expect(migrates[1]).toBeGreaterThan(idx('bootstrap'));
+    });
+
+    it('does not migrate when the shared server never came up', async () => {
+      vi.mocked(_provisionSeam.ensureSharedServer).mockResolvedValue({ up: false, started: false });
+      const res = await provisionBeads({ adapter: fake as never, beadsDir: '/tmp/hb' });
+      expect(ran(fake, 'migrate')).toBe(0);
+      expect(res.schemaMigrate).toBeNull();
+    });
+  });
 });
 
 describe('linkBdOntoPath — GAP 1 PATH symlink (idempotent)', () => {

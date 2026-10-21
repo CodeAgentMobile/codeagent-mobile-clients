@@ -1,9 +1,10 @@
 import * as crypto from 'crypto';
 import * as path from 'path';
 import { resolveApiBaseUrl } from '@codeam/shared';
-import type { BeadsIngestPayload, BeadsStatusSummary } from '@codeam/shared';
+import type { BeadsIngestPayload, BeadsIssueDto, BeadsStatusSummary } from '@codeam/shared';
 import { BdAdapter } from './bd-adapter';
 import { deriveProjectIdentity } from './project-key';
+import { migrateSchema } from './schema-migrate';
 import { _transport } from '../services/file-watcher/transport';
 import { log } from '../services/logger';
 
@@ -79,6 +80,8 @@ export class BeadsWatcher {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private lastPushedHash: string | null = null;
+  /** One schema-heal attempt per watcher — a failing migrate must not loop. */
+  private schemaHealTried = false;
   private readonly bd: BdAdapter;
   private readonly feedPath: string;
   private readonly apiBase: string;
@@ -170,10 +173,19 @@ export class BeadsWatcher {
     if (this.stopped) return;
     const { projectKey, projectLabel } = deriveProjectIdentity(this.opts.cwd);
 
-    const [issues, summary] = await Promise.all([
-      this.bd.listIssues(projectKey),
-      this.bd.statusSummary(),
-    ]);
+    let [issues, summary] = await this.readSnapshot(projectKey);
+    // The DB fell behind this bd's schema (an older bd wrote it, or another
+    // client re-created it after provisioning migrated) → every query fails
+    // `table not found` and the panel would sit empty. Migrate once, re-read.
+    // The flag is set before the await so a concurrent sync can't also migrate.
+    if (!this.schemaHealTried && this.bd.takeSchemaSkew()) {
+      this.schemaHealTried = true;
+      log.info('beads', 'snapshot hit schema skew — running bd migrate schema once');
+      const outcome = await migrateSchema(this.bd);
+      if (outcome.status !== 'failed') {
+        [issues, summary] = await this.readSnapshot(projectKey);
+      }
+    }
 
     const payload: BeadsIngestPayload = {
       sessionId: this.opts.sessionId,
@@ -215,6 +227,12 @@ export class BeadsWatcher {
     } catch (err) {
       log.warn('beads', 'ingest POST error', err);
     }
+  }
+
+  private readSnapshot(
+    projectKey: string,
+  ): Promise<[BeadsIssueDto[], BeadsStatusSummary | null]> {
+    return Promise.all([this.bd.listIssues(projectKey), this.bd.statusSummary()]);
   }
 
   private headers(): Record<string, string> {

@@ -171,12 +171,19 @@ RUN useradd --create-home --home-dir /home/box box
 # audit of an exact-pinned package at bake or launch time informs nobody.
 ENV npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false
 ARG CODEAM_CLI_VERSION=latest
+# bd is EXACT-pinned to the CLI's own `@beads/bd` pin (apps/cli/package.json —
+# guarded by __tests__/beads/bd-version-pin.test.ts). `--omit=optional` drops the
+# CLI's bundled copy, so THIS global bd is the one the CLI and the agent run.
+# Unpinned, a rebuild silently jumped 1.2.2 → 1.3.1: DBs on existing volumes
+# then failed every query (`table not found: leases`) until migrated
+# (2026-10-21). Bump both pins together.
+ARG BEADS_BD_VERSION=1.3.1
 RUN npm install -g --omit=optional \
         "codeam-cli@${CODEAM_CLI_VERSION}" \
         @openai/codex \
         @google/gemini-cli \
         opencode-ai \
-        @beads/bd \
+        "@beads/bd@${BEADS_BD_VERSION}" \
         @electric-sql/pglite \
         @electric-sql/pglite-socket \
     && codeam --version \

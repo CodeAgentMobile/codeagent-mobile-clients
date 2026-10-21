@@ -8,6 +8,7 @@ import type {
   BeadsIssueStatus,
 } from '@codeam/shared';
 import { log } from '../services/logger';
+import { isSchemaSkew } from './schema-migrate';
 
 /**
  * The single wrapper around every `bd` invocation (churn-isolation per spec
@@ -182,6 +183,8 @@ export const _adapterSeam = {
 
 export class BdAdapter {
   private resolved: string | null;
+  /** Set when a bd call failed on schema skew; read + cleared by `takeSchemaSkew`. */
+  private schemaSkewSeen = false;
 
   constructor(private readonly opts: BdAdapterOptions = {}) {
     this.resolved = opts.binaryPath ?? null;
@@ -279,7 +282,20 @@ export class BdAdapter {
       await _adapterSeam.sleep(750 * attempt);
       res = await _spawnSeam.run(binary, args, { cwd, env });
     }
+    if (res.code !== 0 && isSchemaSkew(res.stderr + res.stdout)) this.schemaSkewSeen = true;
     return res;
+  }
+
+  /**
+   * Whether a bd call since the last check failed because the project DB is
+   * behind this bd's schema (see `schema-migrate.ts`). `listIssues` /
+   * `statusSummary` swallow failures into []/null, so this is how the watcher
+   * learns the cause. Clears the flag.
+   */
+  takeSchemaSkew(): boolean {
+    const seen = this.schemaSkewSeen;
+    this.schemaSkewSeen = false;
+    return seen;
   }
 
   /**

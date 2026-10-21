@@ -31,6 +31,7 @@ describe('startBeads — composition-root orchestrator', () => {
       initialized: true,
       exportEnabled: true,
       agentsWired: [],
+      schemaMigrate: null,
     });
     const start = vi.spyOn(watcherMod.BeadsWatcher.prototype, 'start').mockImplementation(() => {});
     const sync = vi
@@ -53,6 +54,7 @@ describe('startBeads — composition-root orchestrator', () => {
       initialized: false,
       exportEnabled: false,
       agentsWired: [],
+      schemaMigrate: null,
     });
     const start = vi.spyOn(watcherMod.BeadsWatcher.prototype, 'start');
 
@@ -71,6 +73,7 @@ describe('startBeads — composition-root orchestrator', () => {
       initialized: false,
       exportEnabled: false,
       agentsWired: [],
+      schemaMigrate: null,
     });
     const start = vi.spyOn(watcherMod.BeadsWatcher.prototype, 'start');
 
@@ -89,6 +92,7 @@ describe('startBeads — composition-root orchestrator', () => {
       initialized: false,
       exportEnabled: false,
       agentsWired: [],
+      schemaMigrate: null,
     });
     await startBeads(baseOpts);
     expect(provision).toHaveBeenCalledTimes(1);

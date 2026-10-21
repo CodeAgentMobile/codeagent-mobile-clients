@@ -9,6 +9,7 @@ import { installDolt, installDoltToDir, ensureDoltResolvable } from './install-d
 import { ensureSharedServer } from './dolt-daemon';
 import { deriveProjectIdentity, findRepoRoot } from './project-key';
 import { prefixForProjectKey } from './project-prefix';
+import { migrateSchema, type SchemaMigrateOutcome } from './schema-migrate';
 import { log } from '../services/logger';
 
 /**
@@ -117,6 +118,11 @@ export interface ProvisionResult {
    * affects the other result fields.
    */
   agentsWired: string[];
+  /**
+   * What `bd migrate schema` did to the project DB this run (null when
+   * provisioning stopped before the server was up). Diagnostic only.
+   */
+  schemaMigrate: SchemaMigrateOutcome | null;
 }
 
 /**
@@ -312,6 +318,7 @@ export async function provisionBeads(opts: ProvisionOptions = {}): Promise<Provi
     initialized: false,
     exportEnabled: false,
     agentsWired: [],
+    schemaMigrate: null,
   };
 
   // Step 1 — ensure bd. On a missing binary, run the consented installer and
@@ -435,6 +442,16 @@ export async function provisionBeads(opts: ProvisionOptions = {}): Promise<Provi
     return result;
   }
 
+  // Step 4a — bring the project DB up to this bd's schema BEFORE anything
+  // queries it. A DB written by an older bd (persistent Box/codespace volume,
+  // newer image) fails EVERY query with `Error 1146: table not found: leases`
+  // under shared-server, because bd won't auto-migrate there (#5920). Without
+  // this, Step 4b's `bd ping` fails on the skew and the self-heal treats a
+  // healthy DB as missing (its mint is refused, beads disabled). Every start;
+  // idempotent ("already current" when there is nothing to do); a missing DB
+  // just fails here and Step 4b creates it. Non-fatal.
+  result.schemaMigrate = await migrateSchemaSafely(bd);
+
   // Step 4b — VERIFY the per-prefix DB actually EXISTS on the shared server,
   // self-healing it if not (the confirmed bug). `bd init --shared-server`
   // (Step 3) only sets up the LOCAL workspace/config; the server-side database
@@ -491,6 +508,10 @@ export async function provisionBeads(opts: ProvisionOptions = {}): Promise<Provi
             'beads',
             `bd bootstrap failed (code=${boot.code}): ${boot.stderr.slice(0, 200)} — prefix DB may be absent`,
           );
+        } else {
+          // A clone of refs/dolt/data carries the schema of whichever bd last
+          // pushed it — possibly older than ours.
+          result.schemaMigrate = await migrateSchemaSafely(bd);
         }
       }
 
@@ -552,9 +573,27 @@ export async function provisionBeads(opts: ProvisionOptions = {}): Promise<Provi
 
   log.info(
     'beads',
-    `provision done dolt=${result.doltAvailable} server=${result.serverUp} prefix=${result.prefix} initialized=${result.initialized} export=${result.exportEnabled} agentsWired=[${result.agentsWired.join(',')}]`,
+    `provision done dolt=${result.doltAvailable} server=${result.serverUp} prefix=${result.prefix} initialized=${result.initialized} schema=${describeSchemaMigrate(result.schemaMigrate)} export=${result.exportEnabled} agentsWired=[${result.agentsWired.join(',')}]`,
   );
   return result;
+}
+
+/** `migrateSchema`, with a throw folded into a `failed` outcome (never aborts). */
+async function migrateSchemaSafely(bd: BdAdapter): Promise<SchemaMigrateOutcome> {
+  try {
+    return await migrateSchema(bd);
+  } catch (err) {
+    log.warn('beads', 'bd migrate schema threw (non-fatal)', err);
+    return { status: 'failed', detail: (err as Error).message };
+  }
+}
+
+function describeSchemaMigrate(outcome: SchemaMigrateOutcome | null): string {
+  if (!outcome) return 'skipped';
+  if (outcome.status === 'applied') {
+    return `applied:${outcome.count}${outcome.forced ? ':forced' : ''}`;
+  }
+  return outcome.status;
 }
 
 /**
