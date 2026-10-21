@@ -178,14 +178,22 @@ ARG CODEAM_CLI_VERSION=latest
 # then failed every query (`table not found: leases`) until migrated
 # (2026-10-21). Bump both pins together.
 ARG BEADS_BD_VERSION=1.3.1
+# PGlite is EXACT-pinned too (guarded by __tests__/box/pglite-version-pin.test.ts).
+# pglite-socket peer-depends on pglite + every extension package (pgtap, age,
+# pgvector, …) at EXACT versions and npm auto-installs those peers, so pinning
+# socket pins the whole set. Unpinned, the v2.76.34 image build resolved a
+# socket whose peer `pglite-pgtap@0.0.12` was still mid-publish upstream → npm
+# ETARGET (2026-10-21). Bump PGLITE_VERSION to the socket's `pglite` peer.
+ARG PGLITE_VERSION=0.5.11
+ARG PGLITE_SOCKET_VERSION=0.2.14
 RUN npm install -g --omit=optional \
         "codeam-cli@${CODEAM_CLI_VERSION}" \
         @openai/codex \
         @google/gemini-cli \
         opencode-ai \
         "@beads/bd@${BEADS_BD_VERSION}" \
-        @electric-sql/pglite \
-        @electric-sql/pglite-socket \
+        "@electric-sql/pglite@${PGLITE_VERSION}" \
+        "@electric-sql/pglite-socket@${PGLITE_SOCKET_VERSION}" \
     && codeam --version \
     && npm cache clean --force \
     && chown -R box:box /usr/local/lib/node_modules /usr/local/bin
