@@ -383,6 +383,20 @@ self-isolate — every hard-isolation invariant above is applied by the CALLER (
 never by anything baked into the image. Runtime env contract: `CODEAM_ENROLL_TOKEN` / `CODEAM_API_URL`
 (required, both `-e`) + optional `REPO_URL`/`GIT_TOKEN` (private-repo clone, same env-not-argv rule).
 
+**Beads version + schema (2026-10-21 incident).** The image's global `bd` is EXACT-pinned
+(`ARG BEADS_BD_VERSION`) to the CLI's `@beads/bd` optional-dependency pin, and
+`__tests__/beads/bd-version-pin.test.ts` fails if they differ — bump both together. The image
+installs the CLI with `--omit=optional`, so the global `bd` is the one the CLI and the agent run.
+A DB on a persistent volume written by an older bd is NOT auto-migrated under shared-server
+(#5920): every query fails `Error 1146: table not found: leases`, `bd ping` with it. So
+`provisionBeads` runs `bd migrate schema` on every start, right after the shared server is up
+and BEFORE the `bd ping` probe (else the self-heal mistakes the skew for a missing DB), and the
+watcher runs it once more if a snapshot hits the skew (`schema-migrate.ts`). A remote-backed DB
+(a `bd bootstrap` clone of `refs/dolt/data`) is refused without `--force` (#4259); we pass
+`--force` and do NOT push — a new bd can't `bd dolt pull` an unmigrated DB anyway, and two clones
+that migrated independently were verified to pull/merge each other cleanly. Until this clone's
+first push, its `bd dolt pull` fails "local changes would be stomped by merge: events".
+
 **`RUN_FLEET_INT` real-Docker CI test** — `apps/cli/__tests__/integration/fleet-box.int.test.ts`,
 env-gated (`RUN_FLEET_INT=1 npx vitest run fleet-box.int` from `apps/cli`, also requires a live Docker
 daemon — mirrors `host-agent.docker.e2e.test.ts`). Builds the real `codeam-box` image, drives the real

@@ -3,7 +3,7 @@ import { join } from 'path';
 import { BeadsWatcher, _chokidarSeam } from '../../src/beads/watcher';
 import { _transport } from '../../src/services/file-watcher/transport';
 import * as projectKey from '../../src/beads/project-key';
-import type { BdAdapter } from '../../src/beads/bd-adapter';
+import type { BdAdapter, BdRunResult } from '../../src/beads/bd-adapter';
 import type { BeadsIssueDto, BeadsStatusSummary } from '@codeam/shared';
 
 function makeIssue(id: string, status: BeadsIssueDto['status']): BeadsIssueDto {
@@ -40,6 +40,7 @@ function fakeAdapter(
   return {
     listIssues: vi.fn().mockResolvedValue(issues),
     statusSummary: vi.fn().mockResolvedValue(summary),
+    takeSchemaSkew: vi.fn().mockReturnValue(false),
   } as unknown as BdAdapter;
 }
 
@@ -259,5 +260,76 @@ describe('BeadsWatcher', () => {
       join('/repo', '.beads', 'last-touched'),
       expect.anything(),
     );
+  });
+
+  describe('schema skew self-heal', () => {
+    const MIGRATED: BdRunResult = {
+      code: 0,
+      stdout: '✓ Schema already at v66',
+      stderr: 'Warning: applying 13 pending schema migration(s) to a shared server database',
+    };
+
+    /** First snapshot fails on schema skew; the DB is healthy once migrated. */
+    function skewedAdapter(migrateResult: BdRunResult) {
+      let migrated = false;
+      let skew = false;
+      const run = vi.fn(async (args: string[]): Promise<BdRunResult> => {
+        if (args[0] === 'migrate') {
+          migrated = migrateResult.code === 0;
+          return migrateResult;
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      });
+      const adapter = {
+        run,
+        listIssues: vi.fn(async () => {
+          if (migrated) return [makeIssue('bd-1', 'open')];
+          skew = true;
+          return [];
+        }),
+        statusSummary: vi.fn(async () => (migrated ? SUMMARY : null)),
+        takeSchemaSkew: vi.fn(() => {
+          const seen = skew;
+          skew = false;
+          return seen;
+        }),
+      };
+      return { adapter, run };
+    }
+
+    it('runs bd migrate schema once and pushes the re-read snapshot', async () => {
+      const post = vi
+        .spyOn(_transport, 'post')
+        .mockResolvedValue({ statusCode: 200, body: '{}' });
+      const { adapter, run } = skewedAdapter(MIGRATED);
+      const w = newWatcher(adapter as unknown as BdAdapter);
+
+      await w.syncNow();
+
+      expect(run).toHaveBeenCalledWith(['migrate', 'schema']);
+      expect(post).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(post.mock.calls[0][2] as string) as { issues: unknown[] };
+      expect(body.issues).toHaveLength(1);
+    });
+
+    it('tries at most once per watcher — a failing migrate never loops', async () => {
+      vi.spyOn(_transport, 'post').mockResolvedValue({ statusCode: 200, body: '{}' });
+      const { adapter, run } = skewedAdapter({ code: 1, stdout: '', stderr: 'boom' });
+      const w = newWatcher(adapter as unknown as BdAdapter);
+
+      await w.syncNow();
+      await w.syncNow();
+      await w.syncNow();
+
+      expect(run.mock.calls.filter((c) => c[0][0] === 'migrate')).toHaveLength(1);
+    });
+
+    it('does not migrate when the snapshot failed for another reason', async () => {
+      vi.spyOn(_transport, 'post').mockResolvedValue({ statusCode: 200, body: '{}' });
+      const run = vi.fn();
+      const adapter = { ...fakeAdapter([]), run } as unknown as BdAdapter;
+      await newWatcher(adapter).syncNow();
+      expect(run).not.toHaveBeenCalled();
+    });
   });
 });
