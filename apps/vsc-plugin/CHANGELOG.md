@@ -4,6 +4,14 @@ All notable changes to the CodeAgent Mobile VS Code extension are documented her
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.35] — 2026-10-22
+
+### Fixed
+
+- **box:** Pin PGlite packages to exact versions (#986)
+- **box:** Require PHP >= 8.2.35 (CVE-2026-109618 / CVE-2026-109619) (#988)
+- **cli:** End an opencode turn on its terminal provider error (#989)
+
 ## [2.76.34] — 2026-10-21
 
 ### Fixed
