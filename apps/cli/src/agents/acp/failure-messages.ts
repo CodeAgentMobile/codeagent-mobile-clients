@@ -433,6 +433,27 @@ export const IDLE_TURN_FAILURE_MESSAGE =
 
 const IDLE_TURN_RE = /ACP prompt idle/;
 
+const AGENT_FREE_LIMIT_RE = /Free usage limit reached/i;
+
+/**
+ * The agent's free model quota is spent (OpenCode Zen: "Free usage limit
+ * reached. Subscribe to OpenCode Go to keep going"). Not a crash and not the
+ * user's credential: every message fails the same way until the quota resets,
+ * so the bubble says so and names the ways forward.
+ */
+export function looksLikeAgentFreeLimit(text: string): boolean {
+  return AGENT_FREE_LIMIT_RE.test(text);
+}
+
+export const AGENT_FREE_LIMIT_MESSAGE = [
+  '⚠️ **OpenCode’s free models have hit their usage limit, so this message wasn’t answered.**',
+  '',
+  'Messages will keep failing until the limit resets. To keep going now:',
+  '• add your own provider key for opencode in **Profile › Agents** (OpenRouter, Anthropic, OpenAI, …),',
+  '• switch this session to another agent, or',
+  '• subscribe to OpenCode Go: [opencode.ai/go](https://opencode.ai/go).',
+].join('\n');
+
 /**
  * Persistent, actionable message for a turn that completed NORMALLY (no
  * throw — `stopReason: 'end_turn'`) but the agent's own ACP server streamed
@@ -633,6 +654,9 @@ export function failureBubble(opts: {
   // availability limit, so surface the accurate daily-limit bubble instead.
   if (looksLikeHouseAgentLimit(opts.detail) || looksLikeHouseAgentLimit(opts.recentStderr)) {
     return houseAgentLimitMessage(`${opts.detail}\n${opts.recentStderr}`);
+  }
+  if (looksLikeAgentFreeLimit(opts.detail) || looksLikeAgentFreeLimit(opts.recentStderr)) {
+    return AGENT_FREE_LIMIT_MESSAGE;
   }
   // BYO provider 402 BEFORE auth: Claude wraps it as "Failed to authenticate.
   // API Error: 402 Insufficient credits…", which the auth branch would turn

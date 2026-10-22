@@ -65,7 +65,29 @@ export interface AdapterSpec {
    * happy path (binary already present → zero delay).
    */
   waitForBinary(opts?: { timeoutMs?: number }): Promise<boolean>;
+  /**
+   * Adapter stderr lines that END the in-flight turn: the agent hit an error it
+   * will never recover from on its own, but keeps the ACP prompt open (no
+   * update, no response) — see {@link OPENCODE_FATAL_TURN_STDERR_RE}. The client
+   * fails the prompt on the first match instead of waiting out the idle window.
+   */
+  fatalTurnStderr?: RegExp;
 }
+
+/**
+ * opencode's terminal provider errors, as `opencode acp --print-logs
+ * --log-level ERROR` prints them. On a provider error opencode logs
+ * `message="stream error" … error.error="…"` and RETRIES, but never reports the
+ * error over ACP: the prompt stays open with no update until our 90 s idle
+ * watchdog trips, and the user sees a generic retry bubble. 2026-10-22: every
+ * Box shares fleet-1's egress IP, so OpenCode Zen's free quota ran out for all
+ * of them ("Free usage limit reached. Subscribe to OpenCode Go…") and half the
+ * opencode turns of the day failed that way (4/4 users). Only errors a retry
+ * cannot fix are listed — a 5xx or a plain 429 rate limit is left to opencode's
+ * own retry.
+ */
+export const OPENCODE_FATAL_TURN_STDERR_RE =
+  /message="stream error".*error\.error="[^"]*(Free usage limit reached|insufficient[_ ]quota|invalid[_ ]api[_ ]key|incorrect api key|unauthorized)/i;
 
 /** Claude's native binary is the SDK's bundled optional platform pkg. */
 function claudeBinaryWaiter(opts: WaitForClaudeBinaryOptions = {}): Promise<boolean> {
@@ -260,8 +282,12 @@ const REGISTRY: Partial<Record<AgentId, () => AdapterSpec | null>> = {
   // the ACP client spawns the adapter with `env: { ...process.env, ...extraEnv }`.
   opencode: () => ({
     command: 'opencode',
-    args: ['acp'],
+    // `--print-logs --log-level ERROR`: opencode writes its provider errors only
+    // to its own log file, so without these flags they never reach the adapter
+    // stderr we read (see OPENCODE_FATAL_TURN_STDERR_RE).
+    args: ['acp', '--print-logs', '--log-level', 'ERROR'],
     requiresAgentBinary: 'opencode',
+    fatalTurnStderr: OPENCODE_FATAL_TURN_STDERR_RE,
     waitForBinary: async (o) => {
       if (isLocalSession()) await ensureOpencodeInstalled();
       // Same stale-PATH guard as kimi above (~/.opencode/bin).

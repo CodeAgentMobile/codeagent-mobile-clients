@@ -198,6 +198,14 @@ export const FATAL_STARTUP_RE =
 const NEWSESSION_TIMEOUT_MS = 120_000;
 
 /**
+ * The agent's own error out of a logfmt stderr line (`error.error="…"`, what
+ * opencode prints), or the whole line when it carries none.
+ */
+export function agentErrorOf(line: string): string {
+  return /error\.error="([^"]+)"/.exec(line)?.[1] ?? line;
+}
+
+/**
  * How long the AGENT waits for ONE MCP server to finish starting, handed to it
  * as `MCP_TIMEOUT`.
  *
@@ -469,6 +477,12 @@ export class AcpClient {
    *  engages; with it, the crash rejects immediately → retry respawns once the
    *  install settles. Broader than {@link startupFailureReject} (newSession-only). */
   private startAbortReject: ((err: Error) => void) | null = null;
+  /** The adapter's {@link AdapterSpec.fatalTurnStderr}, set at spawn. */
+  private fatalTurnStderr: RegExp | null = null;
+  /** Set while a `session/prompt` is in flight; the stderr watcher calls it on
+   *  a {@link fatalTurnStderr} line to end the turn now (opencode keeps a turn
+   *  open forever after a terminal provider error — see the adapter spec). */
+  private turnFailureReject: ((err: Error) => void) | null = null;
 
   constructor(private readonly opts: AcpClientOptions) {}
 
@@ -602,6 +616,7 @@ export class AcpClient {
       'acpClient',
       `provider routing ${formatProviderRouting(describeProviderRouting(childEnv, { cwd }), adapter.command)}`,
     );
+    this.fatalTurnStderr = adapter.fatalTurnStderr ?? null;
     const child = spawn(adapter.command, adapter.args, {
       cwd,
       env: childEnv,
@@ -633,24 +648,7 @@ export class AcpClient {
     child.stderr?.on('data', (chunk: string) => {
       for (const line of chunk.split(/\r?\n/)) {
         const trimmed = line.trim();
-        if (trimmed) {
-          // Bump to info — adapter stderr is the primary signal when
-          // the agent's auth / install / config is wrong and the
-          // protocol just stalls. Trace-level suppression hid the
-          // root cause on every smoke test up to v2.27.6.
-          log.info('acpAdapter', trimmed);
-          this.opts.onStderr?.(trimmed);
-          this.recentStderr.push(trimmed);
-          if (this.recentStderr.length > 12) this.recentStderr.shift();
-          // Fail `newSession` fast when the adapter prints a fatal startup
-          // error (auth / tier ineligibility). gemini --acp logs these to
-          // stderr but never rejects the RPC, so the only other signal is the
-          // timeout backstop — surfacing it here makes the error immediate.
-          if (this.startupFailureReject && FATAL_STARTUP_RE.test(trimmed)) {
-            this.startupFailureReject(new Error(`AGENT_STARTUP_FAILED: ${trimmed}`));
-            this.startupFailureReject = null;
-          }
-        }
+        if (trimmed) this.onAdapterStderrLine(trimmed);
       }
     });
 
@@ -988,11 +986,18 @@ export class AcpClient {
       PROMPT_ACTIVE_IDLE_TIMEOUT_MS,
     );
     this.promptIdle = idle;
+    let fatalTripped = false;
+    const fatal = new Promise<never>((_, reject) => {
+      this.turnFailureReject = (err) => {
+        fatalTripped = true;
+        reject(err);
+      };
+    });
     // Fresh tool-call ledger per turn so a stale entry from a prior
     // turn can't keep this turn's watchdog suspended forever.
     this.pendingToolCalls.clear();
     try {
-      const result = await Promise.race([send, idle.promise]);
+      const result = await Promise.race([send, idle.promise, fatal]);
       // Root-cause fix (fleet-1 handoff-robustness round 3, empirically
       // confirmed on a live box): the ACP SDK's stdio dispatch resolves a
       // `session/prompt` RPC response in ONE promise hop
@@ -1035,18 +1040,47 @@ export class AcpClient {
       // cleanup cancel does, and the cancel kills IT instead — opencode even
       // folds a prompt into a still-running turn (codeagent-u7mm: a queued
       // message failed as "empty reply").
-      if (idleTripped) await this.cancelAbandonedTurn(sessionId, send);
+      // A fatal stderr error leaves the same open turn behind — and opencode
+      // keeps retrying it against the provider until it is cancelled.
+      if (idleTripped || fatalTripped) await this.cancelAbandonedTurn(sessionId, send);
       throw err;
     } finally {
       // Permanently disarm so a late bump/timer can't reject after
       // we've moved on, and drop the handle for the next prompt.
       idle.clear();
       this.promptIdle = null;
+      this.turnFailureReject = null;
+    }
+  }
+
+  /** One non-empty adapter stderr line: logged, kept in the ring, and checked
+   *  for the fatal startup / fatal turn errors that end a stuck RPC early. */
+  private onAdapterStderrLine(trimmed: string): void {
+    // Bump to info — adapter stderr is the primary signal when
+    // the agent's auth / install / config is wrong and the
+    // protocol just stalls. Trace-level suppression hid the
+    // root cause on every smoke test up to v2.27.6.
+    log.info('acpAdapter', trimmed);
+    this.opts.onStderr?.(trimmed);
+    this.recentStderr.push(trimmed);
+    if (this.recentStderr.length > 12) this.recentStderr.shift();
+    // Fail `newSession` fast when the adapter prints a fatal startup
+    // error (auth / tier ineligibility). gemini --acp logs these to
+    // stderr but never rejects the RPC, so the only other signal is the
+    // timeout backstop — surfacing it here makes the error immediate.
+    if (this.startupFailureReject && FATAL_STARTUP_RE.test(trimmed)) {
+      this.startupFailureReject(new Error(`AGENT_STARTUP_FAILED: ${trimmed}`));
+      this.startupFailureReject = null;
+    }
+    // Same for a turn: an error the agent logs but never reports over ACP.
+    if (this.turnFailureReject && this.fatalTurnStderr?.test(trimmed)) {
+      this.turnFailureReject(new Error(`AGENT_TURN_FAILED: ${agentErrorOf(trimmed)}`));
+      this.turnFailureReject = null;
     }
   }
 
   /**
-   * Cancel a turn the idle watchdog abandoned and wait, bounded, for the
+   * Cancel a turn the idle watchdog (or a fatal stderr error) abandoned and wait, bounded, for the
    * adapter to answer its `session/prompt` — the proof the turn is over before
    * the next prompt is sent. Best-effort: a dead adapter can't hold the queue
    * longer than {@link ABANDONED_TURN_SETTLE_MS}.
