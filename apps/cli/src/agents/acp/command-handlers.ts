@@ -102,6 +102,7 @@ import { replyLanguageContextOnce } from './reply-language';
 import { shouldOfferOneMRecovery } from './oneMContextRecovery';
 import { formatPromptEchoLine, formatAgentReplyLine } from './promptEcho';
 import {
+  AGENT_FREE_LIMIT_MESSAGE,
   AUTH_FAILURE_MESSAGE,
   CURSOR_UPGRADE_MESSAGE,
   ONE_M_CREDITS_MESSAGE,
@@ -864,6 +865,7 @@ type TurnFailureCode =
   | 'PROVIDER_BILLING'
   | 'AUTH_FAILED'
   | 'ONE_M_CREDITS'
+  | 'AGENT_FREE_LIMIT'
   | 'EMPTY_REPLY'
   | 'TURN_ERROR'
   | 'TURN_ERROR_PARTIAL'
@@ -1399,7 +1401,9 @@ async function runStartTaskTurn(
           ? 'AUTH_FAILED'
           : bubble === ONE_M_CREDITS_MESSAGE
             ? 'ONE_M_CREDITS'
-            : failed.partialReplyKept
+            : bubble === AGENT_FREE_LIMIT_MESSAGE
+              ? 'AGENT_FREE_LIMIT'
+              : failed.partialReplyKept
               ? 'TURN_ERROR_PARTIAL'
               : 'TURN_ERROR',
       );
