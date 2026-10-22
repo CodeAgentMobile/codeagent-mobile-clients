@@ -107,6 +107,12 @@ RUN apt-get update \
 # package: that one is years behind and drags in ~40 php-symfony-* packages.
 # Composer runs from /usr/local/bin (outside the shadowed /home/box); its own
 # cache lands in ~/.cache/composer at runtime, which is fine.
+# ⚠️ PHP_MIN_VERSION is a security floor, not a pin: apt installs whatever
+# bookworm-security serves, and the build FAILS below it. 8.2.35 fixes the
+# unauthenticated RCEs CVE-2026-109618 / CVE-2026-109619 (2026-10-22); the
+# image published before that shipped 8.2.34. A Preview's `php -S` is reachable
+# through its public tunnel, so a stale mirror must never ship silently.
+ARG PHP_MIN_VERSION=8.2.35
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         php-cli \
@@ -122,6 +128,8 @@ RUN apt-get update \
         php-bcmath \
         php-opcache \
     && rm -rf /var/lib/apt/lists/* \
+    && php -r 'exit(version_compare(PHP_VERSION, getenv("PHP_MIN_VERSION"), ">=") ? 0 : 1);' \
+       || { echo "php $(php -r 'echo PHP_VERSION;') is below the security floor ${PHP_MIN_VERSION}" >&2; exit 1; } \
     && EXPECTED_SIG="$(curl -fsSL --connect-timeout 15 --max-time 60 https://composer.github.io/installer.sig)" \
     && curl -fsSL --connect-timeout 15 --max-time 60 https://getcomposer.org/installer -o /tmp/composer-setup.php \
     && ACTUAL_SIG="$(php -r "echo hash_file('sha384', '/tmp/composer-setup.php');")" \
