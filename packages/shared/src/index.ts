@@ -23,3 +23,4 @@ export * from './types/plugin-agents';
 export * from './types/composer';
 export * from './types/feature-gates';
 export * from './types/compression-savings';
+export * from './point-picker';
