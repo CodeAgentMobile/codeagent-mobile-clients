@@ -322,7 +322,9 @@ describe('pointPickerScript — multi mode (console)', () => {
     expect(h.sent[0].msg).toEqual({ source: 'codeam-inspector', type: 'ready' });
     h.tap(h.q('#a'));
     h.tap(h.q('#b'));
-    expect(h.picks().map((p) => p.markId)).toEqual(['p1', 'p2']);
+    const [a, b] = h.picks().map((p) => String(p.markId));
+    expect(a).toMatch(/^p[a-z0-9]{4}-1$/);
+    expect(b).toBe(a.replace(/-1$/, '-2'));
     expect(h.doc.documentElement.hasAttribute('data-remix-pointing')).toBe(true);
     expect(rings(h).map((r) => r.querySelector('[data-codeam="mark-badge"]')?.textContent)).toEqual(
       ['1', '2'],
@@ -333,7 +335,9 @@ describe('pointPickerScript — multi mode (console)', () => {
     const h = mount(CONSOLE, { html: four });
     enable(h);
     for (const id of ['a', 'b', 'c', 'd', 'e']) h.tap(h.q(`#${id}`));
-    expect(h.picks().map((p) => p.markId)).toEqual(['p1', 'p2', 'p3', 'p4', undefined]);
+    expect(
+      h.picks().map((p) => (typeof p.markId === 'string' ? p.markId.split('-')[1] : p.markId)),
+    ).toEqual(['1', '2', '3', '4', undefined]);
     expect(rings(h)).toHaveLength(4);
   });
 
@@ -342,7 +346,7 @@ describe('pointPickerScript — multi mode (console)', () => {
     enable(h);
     h.tap(h.q('#a'));
     h.tap(h.q('#b'));
-    h.message({ type: 'marks', ids: ['p2'] });
+    h.message({ type: 'marks', ids: [h.picks()[1].markId] });
     expect(rings(h)).toHaveLength(1);
     expect(rings(h)[0].querySelector('[data-codeam="mark-badge"]')?.textContent).toBe('1');
     h.message({ type: 'marks', ids: [] });
@@ -373,7 +377,7 @@ describe('pointPickerScript — multi mode (console)', () => {
     h.tap(el);
     expect(h.picks()[0]).toMatchObject({
       tag: 'button',
-      markId: 'p1',
+      markId: expect.stringMatching(/^p[a-z0-9]{4}-1$/),
       viewport: { w: h.win.innerWidth, h: h.win.innerHeight },
       source: { file: 'src/Buy.tsx', line: 9 },
       rect: { x: 5, y: 5, w: 15, h: 10 },
@@ -406,7 +410,7 @@ describe('pointPickerScript — multi mode (console)', () => {
     h.q('#s').dispatchEvent(new h.win.MouseEvent('mousemove', { bubbles: true }));
     h.q('#s').dispatchEvent(new h.win.MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(h.types()).toEqual(['ready', 'hover', 'pick']);
-    expect(h.picks()[0]).toMatchObject({ tag: 'a', id: 'l', markId: 'p1' });
+    expect(h.picks()[0]).toMatchObject({ tag: 'a', id: 'l', markId: expect.stringMatching(/-1$/) });
   });
 });
 
@@ -462,5 +466,101 @@ describe('pointPickerScript — the React Native door', () => {
     expect(() => api.marks([])).not.toThrow();
     api.disable();
     expect(h.has('[data-codeam="point"]')).toBe(false);
+  });
+});
+
+describe('pointPickerScript — fixes from review', () => {
+  const later = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('single mode: the click the browser fires after the tap never reaches the app', async () => {
+    const h = mount(REMIX, { html: '<a id="go" href="#elsewhere">Go</a>' });
+    let appClicks = 0;
+    h.q('#go').addEventListener('click', () => appClicks++);
+    enable(h);
+    const click = h.tap(h.q('#go'));
+    expect(h.picks()).toHaveLength(1);
+    expect(click.defaultPrevented).toBe(true);
+    expect(appClicks).toBe(0);
+    // One-shot: the NEXT click (a real one, later) is the app's again.
+    const next = new h.win.MouseEvent('click', { bubbles: true, cancelable: true });
+    h.q('#go').dispatchEvent(next);
+    expect(next.defaultPrevented).toBe(false);
+    expect(appClicks).toBe(1);
+  });
+
+  it('the swallow expires on its own when no click follows (~400 ms)', async () => {
+    const h = mount(REMIX, { html: '<button id="go">Go</button>' });
+    let appClicks = 0;
+    h.q('#go').addEventListener('click', () => appClicks++);
+    enable(h);
+    const init = { bubbles: true, cancelable: true, pointerId: 1 };
+    h.move(h.q('#go'));
+    h.q('#go').dispatchEvent(new h.win.PointerEvent('pointerdown', init));
+    h.q('#go').dispatchEvent(new h.win.PointerEvent('pointerup', init));
+    await later(450);
+    h.q('#go').dispatchEvent(new h.win.MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(appClicks).toBe(1);
+  });
+
+  it('multi mode: a disable between pointerup and click still swallows that click', () => {
+    const h = mount(CONSOLE, { html: '<a id="go" href="#elsewhere">Go</a>' });
+    let appClicks = 0;
+    h.q('#go').addEventListener('click', () => appClicks++);
+    enable(h);
+    const init = { bubbles: true, cancelable: true, pointerId: 1 };
+    h.move(h.q('#go'));
+    h.q('#go').dispatchEvent(new h.win.PointerEvent('pointerdown', init));
+    h.q('#go').dispatchEvent(new h.win.PointerEvent('pointerup', init));
+    h.message({ type: 'disable' });
+    const click = new h.win.MouseEvent('click', { bubbles: true, cancelable: true });
+    h.q('#go').dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(appClicks).toBe(0);
+  });
+
+  it('a deep element with long (Tailwind) classes gets a selector of at most 200 chars that resolves to it', () => {
+    // Two long classes per level: four levels of path are well past 200 chars.
+    const cls =
+      'md:flex-a-very-long-utility-class-name-that-goes-on hover:bg-slate-900/50-also-long-enough';
+    let html = '<span id="t">x</span>';
+    for (let i = 0; i < 8; i++) html = `<div class="${cls}"><p></p>${html}</div>`;
+    const h = mount(CONSOLE, {
+      html: html.replace('<span id="t">', '<span class="leaf md:flex">'),
+    });
+    const el = h.q('.leaf');
+    enable(h);
+    h.tap(el);
+    const selector = String(h.picks()[0].selector);
+    expect(selector.length).toBeLessThanOrEqual(200);
+    // It dropped ancestors rather than cutting characters.
+    expect(selector.split(' > ').length).toBeLessThan(4);
+    expect(selector.endsWith('span.leaf.md\\:flex')).toBe(true);
+    expect(selector).not.toContain('\u2026');
+    expect(h.doc.querySelector(selector)).toBe(el);
+  });
+
+  it('escapes ids and classes so the selector stays valid (md:flex, ids starting with a digit)', () => {
+    const h = mount(CONSOLE, {
+      html: '<div class="md:flex w-1/2"><button>A</button></div><button id="1st:go">B</button>',
+    });
+    enable(h);
+    h.tap(h.q('.w-1\\/2 button'));
+    h.tap(h.doc.getElementById('1st:go') as HTMLElement);
+    for (const p of h.picks()) {
+      const sel = String(p.selector);
+      expect(() => h.doc.querySelector(sel)).not.toThrow();
+      expect(h.doc.querySelector(sel)?.textContent).toBe(p.text);
+    }
+  });
+
+  it('mark ids are unique per page load, so a reload never reuses an id the app still holds', () => {
+    const first = mount(CONSOLE, { html: '<button id="a">A</button>' });
+    const second = mount(CONSOLE, { html: '<button id="a">A</button>' });
+    for (const h of [first, second]) {
+      enable(h);
+      h.tap(h.q('#a'));
+    }
+    const [a, b] = [first.picks()[0].markId, second.picks()[0].markId];
+    expect(a).not.toBe(b);
   });
 });

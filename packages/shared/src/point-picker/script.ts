@@ -136,9 +136,12 @@ export function pointPickerScript(opts: PointPickerOptions): string {
 
   var on = false, driver = null, accent = DEFAULT_ACCENT;
   var host = null, veil = null, ring = null, chip = null, style = null, leaving = null;
-  var current = null, down = null, tapped = false, bound = [];
+  var current = null, down = null, tapped = false, bound = [], swallow = null;
   // Multi mode: the pinned marks, drawn in the page and anchored to the document.
+  // Mark ids carry a per-load prefix: after a reload \`seq\` restarts, and the
+  // app may still hold the previous page's p…-1.
   var picked = [], seq = 0, marksHost = null, marksRoot = null;
+  var LOAD = (Math.random().toString(36).slice(2) + '0000').slice(0, 4);
   // The agent's highlights: separate from the person's marks, never numbered.
   var agentMarks = [], agentHost = null, agentRoot = null, agentLayer = null, agentCursor = null, agentListening = false;
 
@@ -194,11 +197,32 @@ export function pointPickerScript(opts: PointPickerOptions): string {
       el !== host && el !== marksHost && el !== agentHost;
   }
 
-  function step(el) {
+  // CSS.escape where the browser has it; else the same algorithm (CSSOM).
+  // Without it a Tailwind class (\`md:flex\`, \`w-1/2\`) makes an invalid selector.
+  function cssEsc(v) {
+    v = String(v);
+    try { if (W.CSS && typeof W.CSS.escape === 'function') return W.CSS.escape(v); } catch (e) {}
+    var out = '';
+    for (var i = 0; i < v.length; i++) {
+      var ch = v.charAt(i), code = v.charCodeAt(i);
+      if (code === 0) out += '\\uFFFD';
+      else if ((code >= 1 && code <= 31) || code === 127 || (i === 0 && code >= 48 && code <= 57) ||
+        (i === 1 && code >= 48 && code <= 57 && v.charAt(0) === '-')) out += '\\\\' + code.toString(16) + ' ';
+      else if (i === 0 && ch === '-' && v.length === 1) out += '\\\\-';
+      else if (code >= 128 || ch === '-' || ch === '_' || /[0-9A-Za-z]/.test(ch)) out += ch;
+      else out += '\\\\' + ch;
+    }
+    return out;
+  }
+
+  // One step of the path. \`lean\` (tag + position only) is the fallback for
+  // a step that alone would not fit the budget.
+  function step(el, lean) {
     var t = tagOf(el);
-    if (el.id) return t + '#' + el.id;
-    var c = squash(attr(el, 'class')).split(' ').filter(Boolean).slice(0, 2);
-    var s = t + (c.length ? '.' + c.join('.') : '');
+    if (el.id && !lean) return t + '#' + cssEsc(el.id);
+    var c = lean ? [] : squash(attr(el, 'class')).split(' ').filter(Boolean).slice(0, 2);
+    var s = t;
+    for (var k = 0; k < c.length; k++) s += '.' + cssEsc(c[k]);
     var p = el.parentElement;
     if (p && p.children) {
       var same = 0, index = 0;
@@ -213,6 +237,8 @@ export function pointPickerScript(opts: PointPickerOptions): string {
     return s;
   }
 
+  // Never cut with an ellipsis (that would be no selector at all): drop the
+  // outermost ancestors until the path fits, so it always matches the element.
   function selectorFor(el) {
     var parts = [], n = el;
     while (n && n.nodeType === 1 && n !== D.body && n !== D.documentElement && parts.length < 4) {
@@ -220,7 +246,9 @@ export function pointPickerScript(opts: PointPickerOptions): string {
       if (n.id) break;
       n = n.parentElement;
     }
-    return clip(parts.join(' > '), 200);
+    while (parts.length > 1 && parts.join(' > ').length > 200) parts.shift();
+    if (parts[0].length > 200) parts[0] = step(el, true);
+    return parts.join(' > ');
   }
 
   function textOf(el) {
@@ -453,7 +481,10 @@ export function pointPickerScript(opts: PointPickerOptions): string {
     down = null;
     if (!d || d.id !== e.pointerId || e.button > 0) return;
     var el = at(e) || current;
-    if (el) pick(el);
+    if (el) {
+      pick(el);
+      armClickSwallow();
+    }
   }
 
   // The click that follows a tap was already picked on pointerup; a click
@@ -463,6 +494,27 @@ export function pointPickerScript(opts: PointPickerOptions): string {
     if (tapped) { tapped = false; return; }
     var el = at(e);
     if (el) pick(el);
+  }
+
+  // The browser fires a click after the pointerup that picked. Once pointing
+  // is off (single mode, or the parent turned it off in between) nothing of
+  // ours would catch it, and a pointed-at link would navigate. One shot:
+  // gone on the next click, or after 400 ms when no click comes.
+  function armClickSwallow() {
+    disarmClickSwallow();
+    var fn = function (e) {
+      block(e);
+      disarmClickSwallow();
+    };
+    swallow = fn;
+    W.addEventListener('click', fn, { capture: true, passive: false });
+    W.setTimeout(function () { if (swallow === fn) disarmClickSwallow(); }, 400);
+  }
+
+  function disarmClickSwallow() {
+    if (!swallow) return;
+    W.removeEventListener('click', swallow, { capture: true });
+    swallow = null;
   }
 
   // The browser took the touch over to scroll: that was not a tap.
@@ -503,7 +555,7 @@ export function pointPickerScript(opts: PointPickerOptions): string {
     // Past the cap the pick still goes up (the app says "4 marks max") but
     // leaves nothing in the page the app would never be able to remove.
     if (picked.length < MAX_MARKS) {
-      var id = 'p' + (++seq);
+      var id = 'p' + LOAD + '-' + (++seq);
       picked.push({ id: id, el: el });
       element.markId = id;
       drawMarks(id);

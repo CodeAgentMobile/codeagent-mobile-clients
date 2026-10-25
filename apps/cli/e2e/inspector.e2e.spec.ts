@@ -3,6 +3,7 @@ import * as http from 'http';
 import type { AddressInfo } from 'net';
 import { startInspectorProxy } from '../src/services/preview/inspector-proxy';
 import { inspectorClientSource } from '../src/services/preview/inspector-client';
+import { pointPickerScript } from '@codeam/shared';
 
 /**
  * El inspector de punta a punta, en un navegador de verdad.
@@ -217,6 +218,83 @@ test.describe('inspector — de punta a punta', () => {
         .toBe(1);
     } finally {
       await r.close();
+    }
+  });
+});
+
+/**
+ * El picker compartido en modo `single` (el de Remix), en un navegador real.
+ *
+ * ⚠️ Tras el `pointerup` que elige, el navegador dispara un `click`. En modo
+ * single el picker ya se apagó, así que sin la «trampa» de un solo uso ese
+ * click llegaba a la app: señalar un enlace NAVEGABA. Solo un navegador de
+ * verdad dispara esa secuencia tal cual (pointerdown → pointerup → click).
+ */
+test.describe('Point at it (single) — de punta a punta', () => {
+  test('señalar un enlace no lo sigue: la app no ve el click', async ({ page }) => {
+    const app = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><html><head><title>App</title></head><body>
+        <a id="go" href="/elsewhere" style="display:inline-block;padding:20px">Go</a>
+        <script>
+          window.__appClicks = 0;
+          document.getElementById('go').addEventListener('click', function () { window.__appClicks++; });
+        </script></body></html>`);
+    });
+    await new Promise<void>((r) => app.listen(0, '127.0.0.1', () => r()));
+    const appPort = (app.address() as AddressInfo).port;
+
+    let proxyPort = 0;
+    const parent = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><html><body>
+        <iframe id="preview" name="preview" src="http://127.0.0.1:${proxyPort}/" style="width:600px;height:400px;border:0"></iframe>
+        <script>
+          window.__picks = [];
+          window.addEventListener('message', function (e) {
+            if (e.data && e.data.channel === 'remix-point' && e.data.type === 'pick') window.__picks.push(e.data.element);
+          });
+          window.__enable = function () {
+            document.getElementById('preview').contentWindow.postMessage({ channel: 'remix-point', type: 'enable' }, '*');
+          };
+        </script></body></html>`);
+    });
+    await new Promise<void>((r) => parent.listen(0, '127.0.0.1', () => r()));
+    const parentOrigin = `http://127.0.0.1:${(parent.address() as AddressInfo).port}`;
+    const proxy = await startInspectorProxy({
+      targetPort: appPort,
+      script: `<script>${pointPickerScript({
+        channel: 'remix-point',
+        channelField: 'channel',
+        allowedParents: [parentOrigin],
+        mode: 'single',
+      })}</script>`,
+    });
+    proxyPort = proxy.port;
+
+    try {
+      await page.goto(`${parentOrigin}/`);
+      const frame = page.frameLocator('#preview');
+      await expect(frame.locator('#go')).toBeVisible();
+      await page.evaluate(() => (window as never as { __enable: () => void }).__enable());
+      await expect(frame.locator('html')).toHaveAttribute('data-remix-pointing', '');
+
+      await frame.locator('#go').click();
+      await expect
+        .poll(() => page.evaluate(() => (window as never as { __picks: unknown[] }).__picks.length))
+        .toBe(1);
+
+      const child = page.frame({ name: 'preview' })!;
+      // Un momento real para que una navegación, si la hubiera, empiece.
+      await page.waitForTimeout(300);
+      expect(await child.evaluate(() => location.pathname)).toBe('/');
+      expect(await child.evaluate(() => (window as never as { __appClicks: number }).__appClicks)).toBe(0);
+      // Y el modo se apagó solo, como en Remix.
+      await expect(frame.locator('html')).not.toHaveAttribute('data-remix-pointing', '');
+    } finally {
+      await proxy.close();
+      await new Promise<void>((r) => parent.close(() => r()));
+      await new Promise<void>((r) => app.close(() => r()));
     }
   });
 });

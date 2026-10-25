@@ -461,7 +461,9 @@ describe('inspector client — las marcas fijadas', () => {
     h.drive('enable');
     h.clickOn('#cta');
     const pick = h.sent.find((m) => m.type === 'pick');
-    expect((pick?.element as { markId?: string }).markId).toMatch(/^p\d+$/);
+    // Opaco para las apps: `p<4 de esta carga>-<n>`, para que una recarga de la
+    // página no reutilice un id que la app todavía guarda.
+    expect((pick?.element as { markId?: string }).markId).toMatch(/^p[a-z0-9]{4}-\d+$/);
   });
 
   /**
@@ -663,7 +665,7 @@ describe('inspector client — es el picker compartido', () => {
     expect(pick?.element).toMatchObject({
       tag: 'button',
       id: 'cta',
-      markId: 'p1',
+      markId: expect.stringMatching(/^p[a-z0-9]{4}-1$/),
       viewport: { w: h.win.innerWidth, h: h.win.innerHeight },
       source: { file: 'components/buy.tsx', line: 7 },
       rect: { x: 5, y: 5, w: 15, h: 10 },
