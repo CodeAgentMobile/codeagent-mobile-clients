@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { pointPickerScript } from '@codeam/shared';
 import {
   inspectorClientSource,
+  INSPECTOR_ACCENT,
   INSPECTOR_CHANNEL,
+  INSPECTOR_MAX_MARKS,
 } from '../../src/services/preview/inspector-client';
 
 /**
@@ -23,10 +26,36 @@ import {
 const DASHBOARD = 'https://www.codeagent-mobile.com';
 const ATTACKER = 'https://evil.example.com';
 
+/**
+ * El picker dibuja en shadow roots CERRADOS (el CSS de la página no lo
+ * alcanza). Se guarda cada root al crearse para poder mirar dentro.
+ */
+function captureShadowRoots(win: Window & typeof globalThis): ShadowRoot[] {
+  const roots: ShadowRoot[] = [];
+  const attach = win.Element.prototype.attachShadow;
+  win.Element.prototype.attachShadow = function (this: Element, init: ShadowRootInit) {
+    const root = attach.call(this, init);
+    roots.push(root);
+    return root;
+  };
+  return roots;
+}
+
+/** Nuestros nodos en la página: DOM normal y shadow roots aún montados. */
+function oursIn(win: Window, roots: ShadowRoot[], selector: string): HTMLElement[] {
+  return [
+    ...Array.from(win.document.querySelectorAll<HTMLElement>(selector)),
+    ...roots
+      .filter((r) => r.host.isConnected)
+      .flatMap((r) => Array.from(r.querySelectorAll<HTMLElement>(selector))),
+  ];
+}
+
 interface Harness {
   dom: JSDOM;
   win: Window & typeof globalThis;
   sent: Array<Record<string, unknown>>;
+  ours: (selector: string) => HTMLElement[];
   drive: (type: string, origin?: string) => void;
   hoverOver: (selector: string) => void;
   clickOn: (selector: string) => void;
@@ -50,6 +79,8 @@ function mount(html: string): Harness {
     configurable: true,
   });
 
+  const roots = captureShadowRoots(win);
+
   // Se evalúa la fuente REAL, quitándole las etiquetas <script>.
   const source = inspectorClientSource({ allowedOrigins: [DASHBOARD] });
   const body = source.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
@@ -70,6 +101,7 @@ function mount(html: string): Harness {
       data: { source: INSPECTOR_CHANNEL, type },
     });
     Object.defineProperty(ev, 'origin', { value: origin });
+    Object.defineProperty(ev, 'source', { value: win.parent });
     win.dispatchEvent(ev);
   };
 
@@ -83,6 +115,7 @@ function mount(html: string): Harness {
     dom,
     win,
     sent,
+    ours: (selector) => oursIn(win, roots, selector),
     drive: post,
     hoverOver: (s) => fire(s, 'mousemove'),
     clickOn: (s) => fire(s, 'click'),
@@ -148,7 +181,8 @@ describe('inspector client — lo que reporta', () => {
       tag: 'button',
       id: 'cta',
       classes: 'btn primary',
-      selector: '#cta',
+      // El selector de Remix: etiqueta + id (o clases y :nth-of-type), con sus padres.
+      selector: 'button#cta',
       text: 'Comprar ahora',
     });
   });
@@ -194,7 +228,7 @@ describe('inspector client — lo que reporta', () => {
     h.hoverOver('.card');
     const hover = h.sent.find((m) => m.type === 'hover');
     expect((hover?.element as { source: unknown }).source).toBeNull();
-    expect((hover?.element as { selector: string }).selector).toBe('div.card.wide.extra');
+    expect((hover?.element as { selector: string }).selector).toBe('div.card.wide');
   });
 
   it('con el fiber de React reporta fichero y línea', () => {
@@ -215,16 +249,19 @@ describe('inspector client — lo que reporta', () => {
 });
 
 describe('inspector client — el resaltado', () => {
-  it('pinta un recuadro sobre lo señalado, con su medida', () => {
+  // El anillo de Remix: 4 px por fuera del elemento, y la etiqueta en serif
+  // con lo que es («“Comprar” button») en vez del selector y la medida.
+  it('pinta el anillo de Remix sobre lo señalado, con su etiqueta', () => {
     const h = mount('<button id="cta" data-box="12">Comprar</button>');
     h.drive('enable');
     h.hoverOver('#cta');
-    const overlay = h.win.document.querySelector('[data-codeam="inspector-overlay"]');
-    const label = h.win.document.querySelector('[data-codeam="inspector-label"]');
-    expect((overlay as HTMLElement).style.left).toBe('12px');
-    expect((overlay as HTMLElement).style.width).toBe('22px');
-    expect(label?.textContent).toContain('#cta');
-    expect(label?.textContent).toContain('22×17');
+    const [ring] = h.ours('[data-codeam="ring"]');
+    const [chip] = h.ours('[data-codeam="chip"]');
+    expect(ring.style.transform).toBe('translate(8px,8px)');
+    expect(ring.style.width).toBe('30px');
+    expect(ring.style.height).toBe('25px');
+    expect(ring.style.borderRadius).toBe('12px');
+    expect(chip.textContent).toBe('\u201cComprar\u201d button');
   });
 
   /**
@@ -236,8 +273,9 @@ describe('inspector client — el resaltado', () => {
     const h = mount('<button id="cta">Comprar</button>');
     h.drive('enable');
     h.hoverOver('#cta');
-    const overlay = h.win.document.querySelector('[data-codeam="inspector-overlay"]');
-    expect((overlay as HTMLElement).style.pointerEvents).toBe('none');
+    const host = h.win.document.querySelector<HTMLElement>('[data-codeam="point"]');
+    expect(host?.style.pointerEvents).toBe('none');
+    expect(h.ours('[data-codeam="ring"]')[0].style.pointerEvents).toBe('none');
   });
 
   // Y no se describe a sí mismo: sin la guarda, pasar el cursor por encima del
@@ -247,7 +285,7 @@ describe('inspector client — el resaltado', () => {
     h.drive('enable');
     h.hoverOver('#cta');
     const before = h.sent.length;
-    const overlay = h.win.document.querySelector('[data-codeam="inspector-overlay"]')!;
+    const overlay = h.win.document.querySelector('[data-codeam="point"]')!;
     overlay.dispatchEvent(new h.win.MouseEvent('mousemove', { bubbles: true }));
     expect(h.sent.length).toBe(before);
   });
@@ -393,8 +431,7 @@ describe('inspector client — dentro del WebView de la app', () => {
  * acompañan al contenido como cualquier otro nodo.
  */
 describe('inspector client — las marcas fijadas', () => {
-  const boxes = (h: Harness) =>
-    Array.from(h.win.document.querySelectorAll('[data-codeam="mark"]')) as HTMLElement[];
+  const boxes = (h: Harness) => h.ours('[data-codeam="mark"]');
 
   it('al pulsar deja una marca DENTRO de la pagina', () => {
     const h = mount('<button id="cta">Comprar</button>');
@@ -415,8 +452,8 @@ describe('inspector client — las marcas fijadas', () => {
     const box = boxes(h)[0];
     expect(box.style.position).toBe('absolute');
     // La caja simulada esta en top:0, asi que con 500 de scroll el documento
-    // la situa en 500.
-    expect(box.style.top).toBe('500px');
+    // la situa en 500 — y el anillo, 4 px por fuera, en 496.
+    expect(box.style.top).toBe('496px');
   });
 
   it('el identificador de la marca viaja con el pick', () => {
@@ -424,7 +461,9 @@ describe('inspector client — las marcas fijadas', () => {
     h.drive('enable');
     h.clickOn('#cta');
     const pick = h.sent.find((m) => m.type === 'pick');
-    expect((pick?.element as { markId?: string }).markId).toMatch(/^p\d+$/);
+    // Opaco para las apps: `p<4 de esta carga>-<n>`, para que una recarga de la
+    // página no reutilice un id que la app todavía guarda.
+    expect((pick?.element as { markId?: string }).markId).toMatch(/^p[a-z0-9]{4}-\d+$/);
   });
 
   /**
@@ -448,6 +487,7 @@ describe('inspector client — las marcas fijadas', () => {
       data: { source: INSPECTOR_CHANNEL, type: 'marks', ids: [ids[1]] },
     });
     Object.defineProperty(ev, 'origin', { value: DASHBOARD });
+    Object.defineProperty(ev, 'source', { value: h.win.parent });
     h.win.dispatchEvent(ev);
 
     const left = boxes(h);
@@ -473,6 +513,7 @@ describe('inspector client — las marcas fijadas', () => {
       data: { source: INSPECTOR_CHANNEL, type: 'marks', ids: [] },
     });
     Object.defineProperty(ev, 'origin', { value: DASHBOARD });
+    Object.defineProperty(ev, 'source', { value: h.win.parent });
     h.win.dispatchEvent(ev);
     expect(boxes(h)).toHaveLength(0);
   });
@@ -501,12 +542,13 @@ describe('inspector client — la fuente', () => {
  */
 describe('inspector client — el agente señala', () => {
   const settle = () => new Promise((r) => setTimeout(r, 1_150));
-  const agentBoxes = (win: Window) =>
-    Array.from(win.document.querySelectorAll('[data-codeam="agent-mark"]')) as HTMLElement[];
+  const agentBoxes = (h: { ours: (selector: string) => HTMLElement[] }) =>
+    h.ours('[data-codeam="agent-mark"]');
 
   function send(h: Harness, data: Record<string, unknown>, origin = DASHBOARD): void {
     const ev = new h.win.MessageEvent('message', { data: { source: INSPECTOR_CHANNEL, ...data } });
     Object.defineProperty(ev, 'origin', { value: origin });
+    Object.defineProperty(ev, 'source', { value: h.win.parent });
     h.win.dispatchEvent(ev);
   }
 
@@ -514,7 +556,7 @@ describe('inspector client — el agente señala', () => {
     const h = mount('<button id="cta" data-box="40">Comprar</button>');
     send(h, { type: 'agent-highlight', selector: '#cta', label: 'Nuevo CTA' });
     await settle();
-    const [box] = agentBoxes(h.win);
+    const [box] = agentBoxes(h);
     expect(box).toBeDefined();
     expect(box.textContent).toBe('Nuevo CTA');
     expect(box.style.pointerEvents).toBe('none');
@@ -527,8 +569,8 @@ describe('inspector client — el agente señala', () => {
     const h = mount('<button id="cta" data-box="40">x</button>');
     send(h, { type: 'agent-highlight', selector: '#cta' });
     await settle();
-    const cursor = h.win.document.querySelector('[data-codeam="agent-cursor"]') as HTMLElement;
-    expect(cursor).not.toBeNull();
+    const [cursor] = h.ours('[data-codeam="agent-cursor"]');
+    expect(cursor).toBeDefined();
     expect(cursor.style.opacity).toBe('1');
   });
 
@@ -537,14 +579,14 @@ describe('inspector client — el agente señala', () => {
     send(h, { type: 'agent-highlight', selector: '#nope' });
     send(h, { type: 'agent-highlight', selector: '[[[' });
     await settle();
-    expect(agentBoxes(h.win)).toHaveLength(0);
+    expect(agentBoxes(h)).toHaveLength(0);
   });
 
   it('un origen ajeno no puede señalar', async () => {
     const h = mount('<button id="cta">x</button>');
     send(h, { type: 'agent-highlight', selector: '#cta' }, ATTACKER);
     await settle();
-    expect(agentBoxes(h.win)).toHaveLength(0);
+    expect(agentBoxes(h)).toHaveLength(0);
   });
 
   it('agent-clear quita marcas y cursor sin dejar nodos', async () => {
@@ -552,7 +594,7 @@ describe('inspector client — el agente señala', () => {
     send(h, { type: 'agent-highlight', selector: '#cta' });
     send(h, { type: 'agent-highlight', selector: '#b' });
     await settle();
-    expect(agentBoxes(h.win)).toHaveLength(2);
+    expect(agentBoxes(h)).toHaveLength(2);
     send(h, { type: 'agent-clear' });
     expect(h.win.document.querySelectorAll('[data-codeam]').length).toBe(0);
   });
@@ -564,6 +606,8 @@ describe('inspector client — el agente señala', () => {
     });
     const win = dom.window as unknown as Window & typeof globalThis;
     (win as unknown as { ReactNativeWebView: unknown }).ReactNativeWebView = { postMessage: () => undefined };
+    const roots = captureShadowRoots(win);
+    const ours = (selector: string) => oursIn(win, roots, selector);
     const source = inspectorClientSource({ allowedOrigins: [DASHBOARD] });
     win.eval(source.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, ''));
     const api = (win as unknown as {
@@ -577,8 +621,60 @@ describe('inspector client — el agente señala', () => {
     expect(api.highlight('#missing')).toBe(false);
     expect(() => api.marks([])).not.toThrow();
     await settle();
-    expect(agentBoxes(win)).toHaveLength(1);
+    expect(agentBoxes({ ours })).toHaveLength(1);
     api.clear();
-    expect(agentBoxes(win)).toHaveLength(0);
+    expect(agentBoxes({ ours })).toHaveLength(0);
+  });
+});
+
+/**
+ * Un solo picker: el «Point at it» de Remix, de `@codeam/shared`. El CLI solo
+ * elige sus opciones — el canal y el campo de siempre, varias marcas, las del
+ * agente, la fuente de React y el morado de la consola.
+ */
+describe('inspector client — es el picker compartido', () => {
+  it('inyecta el script de @codeam/shared con las opciones de la consola', () => {
+    const src = inspectorClientSource({ allowedOrigins: [DASHBOARD] });
+    expect(src.startsWith('<script id="codeam-inspector" data-codeam="inspector">')).toBe(true);
+    expect(src).toContain(
+      pointPickerScript({
+        channel: INSPECTOR_CHANNEL,
+        channelField: 'source',
+        allowedParents: [DASHBOARD],
+        mode: 'multi',
+        maxMarks: INSPECTOR_MAX_MARKS,
+        accent: INSPECTOR_ACCENT,
+        agentHighlights: true,
+        reactSource: true,
+        globalName: '__codeamInspector',
+      }),
+    );
+    expect(INSPECTOR_ACCENT).toBe('#a855f7');
+    expect(INSPECTOR_MAX_MARKS).toBe(4);
+  });
+
+  it('el pick lleva markId, el viewport de la página y la fuente de React', () => {
+    const h = mount('<button id="cta" data-box="5"><span id="in">Comprar</span></button>');
+    Object.assign(h.win.document.querySelector('#cta')!, {
+      __reactFiber$abc: { _debugSource: { fileName: 'components/buy.tsx', lineNumber: 7 } },
+    });
+    h.drive('enable');
+    // Se pulsa el <span>: el picker sube al botón que lo contiene.
+    h.clickOn('#in');
+    const pick = h.sent.find((m) => m.type === 'pick');
+    expect(pick?.element).toMatchObject({
+      tag: 'button',
+      id: 'cta',
+      markId: expect.stringMatching(/^p[a-z0-9]{4}-1$/),
+      viewport: { w: h.win.innerWidth, h: h.win.innerHeight },
+      source: { file: 'components/buy.tsx', line: 7 },
+      rect: { x: 5, y: 5, w: 15, h: 10 },
+    });
+  });
+
+  it('el mismo canal de siempre: enable/marks/agent-* entran por `source`', () => {
+    const h = mount('<button id="cta">x</button>');
+    h.drive('enable');
+    expect(h.sent[0]).toEqual({ source: INSPECTOR_CHANNEL, type: 'ready' });
   });
 });

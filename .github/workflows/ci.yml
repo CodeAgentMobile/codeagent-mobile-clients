@@ -127,6 +127,15 @@ jobs:
         working-directory: apps/cli
         run: npm run test
 
+      # @codeam/shared's own suite. The CLI bundles shared from source, but
+      # the shared-only tests (e.g. `point-picker/remix-compat.test.ts`, the
+      # Remix Worker's picker tests run against single mode) are not in the
+      # CLI's glob — without this step a PR that breaks them is only caught
+      # at release time.
+      - name: Shared package tests (Vitest)
+        working-directory: packages/shared
+        run: npm run test
+
       # Explicit STEP-8 gate for the 2026-07 cursor-agent ENOENT fix (bead
       # codeagent-ce5). The win32-native integration test reproduces Cursor's
       # real installer layout — %LOCALAPPDATA%\cursor-agent\cursor-agent.exe —
