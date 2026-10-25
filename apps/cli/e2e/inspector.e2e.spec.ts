@@ -110,12 +110,13 @@ test.describe('inspector — de punta a punta', () => {
         .poll(() => page.evaluate(() => (window as never as { __ready: boolean }).__ready))
         .toBe(true);
 
-      // 2. Al pasar por encima, la página se resalta a sí misma — el aspecto
-      //    del inspector del navegador, y pixel-exacto porque lo pinta quien
-      //    conoce el layout.
+      // 2. Al pasar por encima, la página se resalta a sí misma — el «Point at
+      //    it» de Remix, pixel-exacto porque lo pinta quien conoce el layout.
+      //    Lo dibuja en un shadow root CERRADO (el CSS de la app no lo toca),
+      //    así que desde fuera se ve su anfitrión y el modo puesto en <html>.
       await frame.locator('#cta').hover();
-      await expect(frame.locator('[data-codeam="inspector-overlay"]')).toBeVisible();
-      await expect(frame.locator('[data-codeam="inspector-label"]')).toContainText('#cta');
+      await expect(frame.locator('[data-codeam="point"]')).toHaveCount(1);
+      await expect(frame.locator('html')).toHaveAttribute('data-remix-pointing', '');
 
       // 3. Y al pulsar, el dashboard recibe QUÉ se pulsó.
       //
@@ -134,7 +135,7 @@ test.describe('inspector — de punta a punta', () => {
         tag: 'button',
         id: 'cta',
         classes: 'btn primary',
-        selector: '#cta',
+        selector: 'button#cta',
         text: 'Contactar Ahora',
       });
 
@@ -164,7 +165,7 @@ test.describe('inspector — de punta a punta', () => {
       await frame.locator('#cta').click();
       // Una espera real antes de afirmar el vacío: si no, se estaría
       // comprobando que un mensaje no ha llegado TODAVÍA, no que no llega.
-      await expect(frame.locator('[data-codeam="inspector-overlay"]')).toHaveCount(0);
+      await expect(frame.locator('[data-codeam="point"]')).toHaveCount(0);
       await expect
         .poll(() => page.evaluate(() => (window as never as { __picks: unknown[] }).__picks.length))
         .toBe(0);
@@ -194,11 +195,11 @@ test.describe('inspector — de punta a punta', () => {
 
       await drive('enable');
       await frame.locator('#cta').hover();
-      await expect(frame.locator('[data-codeam="inspector-overlay"]')).toBeVisible();
+      await expect(frame.locator('[data-codeam="point"]')).toHaveCount(1);
 
       await drive('disable');
-      await expect(frame.locator('[data-codeam="inspector-overlay"]')).toHaveCount(0);
-      await expect(frame.locator('[data-codeam="inspector-label"]')).toHaveCount(0);
+      await expect(frame.locator('[data-codeam="point"]')).toHaveCount(0);
+      await expect(frame.locator('html')).not.toHaveAttribute('data-remix-pointing', '');
       // El script sigue ahí, listo para volver a encenderse.
       await expect(frame.locator('script[data-codeam="inspector"]')).toHaveCount(1);
 
