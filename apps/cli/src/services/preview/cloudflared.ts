@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import dns, { Resolver } from 'dns/promises';
 import { createWriteStream } from 'fs';
 import fs from 'fs/promises';
@@ -6,8 +6,16 @@ import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import which from 'which';
+import { log } from '../logger';
 
-const CACHED_BINARY = path.join(os.homedir(), '.codeam', 'bin', 'cloudflared');
+const CACHE_DIR = path.join(os.homedir(), '.codeam', 'bin');
+/** Pre-2.76.37 cache path; on Windows it held the `.exe` without its extension. */
+const LEGACY_CACHED_BINARY = path.join(CACHE_DIR, 'cloudflared');
+
+/** Where the CLI keeps its own cloudflared (`cloudflared.exe` on Windows). */
+export function cachedCloudflaredPath(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? path.join(CACHE_DIR, 'cloudflared.exe') : LEGACY_CACHED_BINARY;
+}
 
 /**
  * Block until a Cloudflare Quick Tunnel URL is DNS-resolvable.
@@ -87,47 +95,245 @@ interface Options {
   skipDownload?: boolean;
 }
 
+/** `[year, month, patch]` — cloudflared's calendar version (`2026.10.2`). */
+export type CloudflaredVersion = readonly [number, number, number];
+
+/**
+ * Builds older than this trust the compromised eMudhra intermediate
+ * certificates (Cloudflare advisory, 2026-10-20) and Cloudflare requires
+ * connectors to upgrade.
+ */
+export const MIN_CLOUDFLARED_VERSION: CloudflaredVersion = [2026, 10, 2];
+/**
+ * macOS builds not installed through Homebrew ship their own trust bundle and
+ * needed one more release to drop the eMudhra intermediates.
+ */
+export const MIN_CLOUDFLARED_VERSION_DARWIN_NON_BREW: CloudflaredVersion = [2026, 10, 3];
+
+const DEFAULT_HOMEBREW_PREFIXES = [
+  '/opt/homebrew/',
+  '/usr/local/Cellar/',
+  '/usr/local/Homebrew/',
+  '/home/linuxbrew/',
+];
+
+/** The default Homebrew prefixes plus `$HOMEBREW_PREFIX` (and its Cellar) when set. */
+export function homebrewPrefixes(env: NodeJS.ProcessEnv = process.env): string[] {
+  const custom = env.HOMEBREW_PREFIX?.replace(/\/+$/, '');
+  return custom
+    ? [...DEFAULT_HOMEBREW_PREFIXES, `${custom}/`, `${custom}/Cellar/`]
+    : [...DEFAULT_HOMEBREW_PREFIXES];
+}
+
+/** Parse `cloudflared --version` output (`cloudflared version 2026.10.2 (built …)`). */
+export function parseCloudflaredVersion(output: string): CloudflaredVersion | null {
+  const m = /cloudflared version (\d+)\.(\d+)\.(\d+)/.exec(output);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** True when `bin` lives under one of `prefixes` (each ends with `/`). */
+export function isHomebrewPath(bin: string, prefixes: string[] = homebrewPrefixes()): boolean {
+  return prefixes.some((prefix) => bin.startsWith(prefix));
+}
+
+export function formatCloudflaredVersion(v: CloudflaredVersion): string {
+  return v.join('.');
+}
+
+/** The minimum version a binary at `bin` must report on `platform`. */
+export function minimumCloudflaredVersion(
+  bin: string,
+  platform: NodeJS.Platform = process.platform,
+  prefixes: string[] = homebrewPrefixes(),
+): CloudflaredVersion {
+  return platform === 'darwin' && !isHomebrewPath(bin, prefixes)
+    ? MIN_CLOUDFLARED_VERSION_DARWIN_NON_BREW
+    : MIN_CLOUDFLARED_VERSION;
+}
+
+function compareVersions(a: CloudflaredVersion, b: CloudflaredVersion): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+/**
+ * True when `version` meets the minimum for `bin` on `platform`. An unknown
+ * (unparseable / unrunnable) version is treated as outdated.
+ */
+export function meetsMinimumCloudflaredVersion(
+  version: CloudflaredVersion | null,
+  bin: string,
+  platform: NodeJS.Platform = process.platform,
+  prefixes: string[] = homebrewPrefixes(),
+): boolean {
+  if (!version) return false;
+  return compareVersions(version, minimumCloudflaredVersion(bin, platform, prefixes)) >= 0;
+}
+
+// Per-process cache so a preview start doesn't spawn `--version` every time.
+// Keyed by path; the entry is dropped whenever we replace that file, and a
+// failed read is never kept (a transient timeout must not condemn a good binary).
+const versionCache = new Map<string, Promise<CloudflaredVersion | null>>();
+const warnedOutdated = new Set<string>();
+
+/** Test-only: forget cached `--version` results. */
+export function _resetCloudflaredVersionCache(): void {
+  versionCache.clear();
+  warnedOutdated.clear();
+}
+
+function readCloudflaredVersion(bin: string): Promise<CloudflaredVersion | null> {
+  let cached = versionCache.get(bin);
+  if (!cached) {
+    const pending = new Promise<CloudflaredVersion | null>((resolve) => {
+      execFile(bin, ['--version'], { timeout: 10_000 }, (err, stdout, stderr) => {
+        resolve(err ? null : parseCloudflaredVersion(`${stdout}\n${stderr}`));
+      });
+    }).then((version) => {
+      if (!version && versionCache.get(bin) === pending) versionCache.delete(bin);
+      return version;
+    });
+    cached = pending;
+    versionCache.set(bin, pending);
+  }
+  return cached;
+}
+
+async function realpathOrSelf(p: string): Promise<string> {
+  try {
+    return await fs.realpath(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * Whether the binary at `bin` is new enough. A Homebrew-managed binary is
+ * usually reached through a `/usr/local/bin` symlink into the Cellar, and
+ * `$HOMEBREW_PREFIX` may itself be a symlink, so both sides are compared
+ * after realpath as well as as given.
+ */
+async function checkCloudflaredVersion(
+  bin: string,
+): Promise<{ ok: boolean; version: CloudflaredVersion | null; min: CloudflaredVersion }> {
+  const version = await readCloudflaredVersion(bin);
+  const real = await realpathOrSelf(bin);
+  const prefixes = homebrewPrefixes();
+  const customPrefix = process.env.HOMEBREW_PREFIX?.replace(/\/+$/, '');
+  if (customPrefix) {
+    const realPrefix = await realpathOrSelf(customPrefix);
+    if (realPrefix !== customPrefix) prefixes.push(`${realPrefix}/`, `${realPrefix}/Cellar/`);
+  }
+  const brewBin = isHomebrewPath(bin, prefixes) ? bin : real;
+  return {
+    ok: meetsMinimumCloudflaredVersion(version, brewBin, process.platform, prefixes),
+    version,
+    min: minimumCloudflaredVersion(brewBin, process.platform, prefixes),
+  };
+}
+
+/**
+ * Windows caches used to be written without the `.exe` extension. Move such a
+ * file to the new path so it can still be version-checked and reused.
+ */
+async function migrateLegacyWindowsCache(target: string): Promise<void> {
+  if (target === LEGACY_CACHED_BINARY) return;
+  try {
+    await fs.access(target);
+    return;
+  } catch {
+    // no new-style cache yet
+  }
+  try {
+    await fs.access(LEGACY_CACHED_BINARY);
+    await fs.rename(LEGACY_CACHED_BINARY, target);
+  } catch {
+    // nothing to migrate (or it failed) → the normal lookup/download handles it
+  }
+}
+
+function describeVersion(v: CloudflaredVersion | null): string {
+  return v ? formatCloudflaredVersion(v) : 'an unknown version';
+}
+
 /**
  * Resolve a path to the cloudflared binary. Lookup order:
  *
  *   1. `$PATH` (Homebrew / scoop / system install)
- *   2. The CLI's own cache at `~/.codeam/bin/cloudflared` (from a
+ *   2. The CLI's own cache at `~/.codeam/bin/cloudflared[.exe]` (from a
  *      previous auto-install on this machine)
  *   3. Download the static binary from cloudflare/cloudflared's
  *      latest GitHub release into the cache and return that path
+ *
+ * Every candidate must meet {@link minimumCloudflaredVersion}: an outdated
+ * PATH binary is skipped (with a warning), an outdated cached binary is
+ * deleted and re-downloaded, and a fresh download that is still too old
+ * throws.
  *
  * Throws when steps 1–3 all fail (corporate proxy, antivirus
  * quarantine). The error message is what the mobile / landing error
  * card renders verbatim, so it MUST be human-actionable.
  */
 export async function resolveCloudflared(opts: Options = {}): Promise<string> {
+  let pathBin: string | undefined;
   try {
-    return await which('cloudflared');
+    pathBin = await which('cloudflared');
   } catch {
     // fallthrough
   }
-
-  try {
-    await fs.access(CACHED_BINARY);
-    if (await isExecutableBinary(CACHED_BINARY)) {
-      return CACHED_BINARY;
+  if (pathBin) {
+    const check = await checkCloudflaredVersion(pathBin);
+    if (check.ok) return pathBin;
+    if (!warnedOutdated.has(pathBin)) {
+      warnedOutdated.add(pathBin);
+      log.warn(
+        'preview',
+        `ignoring ${pathBin} (${describeVersion(check.version)}): previews need cloudflared >= ${formatCloudflaredVersion(check.min)}; upgrade cloudflared with your package manager (e.g. \`brew upgrade cloudflared\`). Using a CodeAgent-managed copy instead.`,
+      );
     }
-    // Self-heal: an earlier version wrote the macOS `.tgz` archive straight to
-    // this path (and chmod +x'd it), so the cache is a gzip file that fails
-    // with `spawn ENOEXEC`. Drop it and re-download + extract below.
-    await fs.rm(CACHED_BINARY, { force: true });
+  }
+
+  const cached = cachedCloudflaredPath();
+  await migrateLegacyWindowsCache(cached);
+  let staleCache = false;
+  try {
+    await fs.access(cached);
+    // isExecutableBinary self-heals an earlier bug that wrote the macOS `.tgz`
+    // archive straight to this path (spawn ENOEXEC): that file is useless, so
+    // it goes now.
+    if (!(await isExecutableBinary(cached))) {
+      await fs.rm(cached, { force: true });
+    } else if ((await checkCloudflaredVersion(cached)).ok) {
+      return cached;
+    } else {
+      // Outdated: replaced by the download below (kept under skipDownload).
+      staleCache = true;
+    }
   } catch {
     // fallthrough
   }
 
   if (opts.skipDownload) {
     throw new Error(
-      'cloudflared not installed. Install via `brew install cloudflared` (macOS) or download from https://github.com/cloudflare/cloudflared/releases.',
+      `cloudflared not installed (or older than ${formatCloudflaredVersion(minimumCloudflaredVersion(cached))}). Install or upgrade via \`brew install cloudflared\` (macOS) or download from https://github.com/cloudflare/cloudflared/releases.`,
     );
   }
 
-  await downloadCloudflared(CACHED_BINARY);
-  return CACHED_BINARY;
+  if (staleCache) await fs.rm(cached, { force: true });
+  versionCache.delete(cached);
+  await downloadCloudflared(cached);
+  versionCache.delete(cached);
+  const check = await checkCloudflaredVersion(cached);
+  if (!check.ok) {
+    await fs.rm(cached, { force: true });
+    versionCache.delete(cached);
+    throw new Error(
+      `Downloaded cloudflared reports ${describeVersion(check.version)}, but previews need cloudflared >= ${formatCloudflaredVersion(check.min)}. Install the latest version manually via \`brew install cloudflared\` (macOS) or from https://github.com/cloudflare/cloudflared/releases.`,
+    );
+  }
+  return cached;
 }
 
 async function downloadCloudflared(target: string): Promise<void> {
