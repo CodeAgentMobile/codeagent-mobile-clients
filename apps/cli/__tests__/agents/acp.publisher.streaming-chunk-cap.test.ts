@@ -5,6 +5,7 @@ import {
   STREAMING_CHUNK_SNAPSHOT_MAX_CHARS,
   boundStreamingChunkContent,
 } from '../../src/agents/acp/publisher';
+import { STREAMING_CHUNK_MIN_INTERVAL_MS } from '../../src/services/streaming/chunk-coalescer';
 import * as transport from '../../src/services/streaming/transport';
 
 /**
@@ -84,16 +85,35 @@ describe('AcpPublisher — streaming-chunk snapshot cap', () => {
     expect(payloads()[1].content.length).toBeLessThan(64 * 1024);
   });
 
-  it('small snapshots go out on every delta (no behavior change below 8 KB)', async () => {
+  it('small snapshots: first at once, then latest-wins every 100 ms (2026-10-29 flood)', async () => {
     for (let i = 0; i < 5; i++) {
-      await publisher.publishStreamingChunk({
+      void publisher.publishStreamingChunk({
         chunkId: 'c2',
         kind: 'text',
         content: 'a'.repeat(100 * (i + 1)),
         isFinal: false,
       });
     }
-    expect(postSpy).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(STREAMING_CHUNK_MIN_INTERVAL_MS);
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    expect(payloads()[1].content).toBe('a'.repeat(500));
+    await publisher.publishStreamingChunk({
+      chunkId: 'c2',
+      kind: 'text',
+      content: 'a'.repeat(600),
+      isFinal: true,
+    });
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    expect(payloads()[2]).toMatchObject({ isFinal: true, content: 'a'.repeat(600) });
+  });
+
+  it('flushStreamingChunks sends the coalesced snapshot still waiting', async () => {
+    void publisher.publishStreamingChunk({ chunkId: 'c4', kind: 'text', content: 'x', isFinal: false });
+    void publisher.publishStreamingChunk({ chunkId: 'c4', kind: 'text', content: 'xy', isFinal: false });
+    await publisher.flushStreamingChunks();
+    expect(payloads().map((p) => p.content)).toEqual(['x', 'xy']);
   });
 
   it('big snapshots are coalesced to one trailing POST per window, latest content wins; final flushes immediately', async () => {
@@ -105,13 +125,13 @@ describe('AcpPublisher — streaming-chunk snapshot cap', () => {
       isFinal: false,
     });
     expect(postSpy).toHaveBeenCalledTimes(1); // first one goes straight out
-    await publisher.publishStreamingChunk({
+    void publisher.publishStreamingChunk({
       chunkId: 'c3',
       kind: 'thinking',
       content: base + '1',
       isFinal: false,
     });
-    await publisher.publishStreamingChunk({
+    void publisher.publishStreamingChunk({
       chunkId: 'c3',
       kind: 'thinking',
       content: base + '12',
@@ -121,7 +141,7 @@ describe('AcpPublisher — streaming-chunk snapshot cap', () => {
     await vi.advanceTimersByTimeAsync(STREAMING_CHUNK_COALESCE_WINDOW_MS + 5);
     expect(postSpy).toHaveBeenCalledTimes(2);
     expect(payloads()[1].content.endsWith('12')).toBe(true); // latest snapshot, not the first pending one
-    await publisher.publishStreamingChunk({
+    void publisher.publishStreamingChunk({
       chunkId: 'c3',
       kind: 'thinking',
       content: base + '123',

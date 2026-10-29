@@ -2360,6 +2360,12 @@ export async function runAcpSession(opts: AcpRunnerOptions): Promise<void> {
   const shutdown = async (signal: NodeJS.Signals) => {
     showInfo(`Shutting down ACP session (${signal})…`);
     clearTimeout(prewarmTimer);
+    // Coalesced streaming-chunk snapshots still waiting go out before exit;
+    // bounded so a hung request can't stall the shutdown.
+    await Promise.race([
+      publisher.flushStreamingChunks(),
+      new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref()),
+    ]);
     // AWAITED goodbye — a fire-and-forget `online:false` never made it out
     // before `process.exit` below, so mobile kept the session ONLINE.
     await stopRelayWithGoodbye(relay);
