@@ -10,6 +10,7 @@ import type {
 import { resolveApiBaseUrl, renderToLines } from '@codeam/shared';
 import { log } from './logger';
 import { _transport } from './streaming/transport';
+import { StreamingChunkCoalescer } from './streaming/chunk-coalescer';
 import type { RuntimeStrategy } from '../agents/strategy';
 
 /**
@@ -41,7 +42,9 @@ import type { RuntimeStrategy } from '../agents/strategy';
  *
  * Throttle: we coalesce within a 50 ms window — mirrors the backend's
  * SSE-coalescing logic and keeps a hot Claude tool-loop from
- * generating one HTTP roundtrip per render-tick.
+ * generating one HTTP roundtrip per render-tick. The POSTs themselves go
+ * through `StreamingChunkCoalescer` (latest wins, one in flight and ≥100 ms
+ * apart per chunkId, the final frame always last).
  *
  * Best-effort transport: every POST is fire-and-forget with a small
  * retry budget; we never block the agent on emission. Failures land
@@ -141,6 +144,10 @@ export class StreamingEmitterService {
    */
   private lastSelectorSignature: string | null = null;
   private selectorFirstSeenAt = 0;
+  /** Latest-wins, one-in-flight-per-chunkId pacing of the chunk POSTs. */
+  private readonly chunkCoalescer = new StreamingChunkCoalescer({
+    send: (event) => this.postChunk(event),
+  });
 
   constructor(private readonly opts: StreamingEmitterOptions) {
     this.apiBase = opts.apiBaseUrl ?? API_BASE;
@@ -183,13 +190,14 @@ export class StreamingEmitterService {
       const finalContent = this.activeChunk.currentContent;
       const chunk = this.activeChunk;
       this.activeChunk = null;
-      await this.postChunk({
+      await this.chunkCoalescer.submit({
         chunkId: chunk.chunkId,
         kind: chunk.kind,
         content: finalContent,
         isFinal: true,
       });
     }
+    await this.chunkCoalescer.flush();
     log.trace('streamingEmitter', `stopped session=${this.opts.sessionId.slice(0, 8)}`);
   }
 
@@ -265,7 +273,7 @@ export class StreamingEmitterService {
     if (this.activeChunk) {
       const closing = this.activeChunk;
       this.activeChunk = null;
-      void this.postChunk({
+      void this.chunkCoalescer.submit({
         chunkId: closing.chunkId,
         kind: closing.kind,
         content: closing.currentContent,
@@ -290,7 +298,7 @@ export class StreamingEmitterService {
     if (chunk.currentContent === chunk.emittedContent) return;
     chunk.emittedContent = chunk.currentContent;
     chunk.lastEmitAt = now;
-    void this.postChunk({
+    void this.chunkCoalescer.submit({
       chunkId: chunk.chunkId,
       kind: chunk.kind,
       content: chunk.currentContent,

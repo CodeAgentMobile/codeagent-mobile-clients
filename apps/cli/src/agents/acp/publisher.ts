@@ -29,6 +29,10 @@ import { _transport } from '../../services/streaming/transport';
 import { resolveApiBaseUrl } from '@codeam/shared';
 import type { AwaitingAnswerEvent, SessionBlocker, StreamingChunkEvent } from '@codeam/shared';
 import { log } from '../../services/logger';
+import {
+  STREAMING_CHUNK_MIN_INTERVAL_MS,
+  StreamingChunkCoalescer,
+} from '../../services/streaming/chunk-coalescer';
 
 export interface AcpPublisherOptions {
   sessionId: string;
@@ -65,9 +69,9 @@ export interface AcpPublisherOptions {
 export const STREAMING_CHUNK_SNAPSHOT_MAX_CHARS = 56 * 1024;
 
 /**
- * Above this size a chunk's snapshots are coalesced to at most one POST per
- * window: a 50 KB tool result re-sent on each of 20 deltas/s is 1 MB/s that
- * mobile immediately replaces with the next snapshot anyway.
+ * Above this size a chunk's snapshots are spaced by the wider window (smaller
+ * ones by {@link STREAMING_CHUNK_MIN_INTERVAL_MS}): a 50 KB tool result re-sent
+ * on each of 20 deltas/s is 1 MB/s that mobile immediately replaces anyway.
  */
 export const STREAMING_CHUNK_COALESCE_MIN_CHARS = 8 * 1024;
 export const STREAMING_CHUNK_COALESCE_WINDOW_MS = 300;
@@ -131,11 +135,15 @@ export class AcpPublisher {
   /** chunkIds whose truncated snapshot already went out — nothing new to show
    *  until the terminal frame. */
   private readonly truncatedChunks = new Set<string>();
-  private readonly lastChunkPostAt = new Map<string, number>();
-  private readonly pendingChunkPosts = new Map<
-    string,
-    { timer: ReturnType<typeof setTimeout>; event: StreamingChunkEvent }
-  >();
+  /** Latest-wins, one-in-flight-per-chunkId pacing of the streaming-chunk
+   *  feed (2026-10-29: one CLI posted 10–30 cumulative snapshots/s). */
+  private readonly chunkCoalescer = new StreamingChunkCoalescer({
+    send: (event) => this.postStreamingChunk(event),
+    intervalFor: (event) =>
+      event.content.length >= STREAMING_CHUNK_COALESCE_MIN_CHARS
+        ? STREAMING_CHUNK_COALESCE_WINDOW_MS
+        : STREAMING_CHUNK_MIN_INTERVAL_MS,
+  });
   /** Latched on an unrecoverable 401/403 — every surface stops posting
    *  (2026-06-28 incident: a dead-token publisher spammed 401 ×34 while
    *  the agent's replies silently never reached the phone). */
@@ -320,15 +328,13 @@ export class AcpPublisher {
    * ({@link publishOutput}) is independent and carries `type:'text'`
    * for the main chat bubble; this feed is purely additive for the
    * richer SessionDetail surface.
+   *
+   * POSTs are paced per chunkId by {@link StreamingChunkCoalescer}: latest
+   * snapshot wins, one request in flight, and the `isFinal` frame always goes
+   * last. The promise settles once this content (or a newer one) is sent.
    */
   async publishStreamingChunk(event: StreamingChunkEvent): Promise<void> {
     const { chunkId, isFinal } = event;
-    // A newer snapshot supersedes any coalesced one still waiting.
-    const pending = this.pendingChunkPosts.get(chunkId);
-    if (pending) {
-      clearTimeout(pending.timer);
-      this.pendingChunkPosts.delete(chunkId);
-    }
     const bounded = boundStreamingChunkContent(event.content);
     if (bounded.truncated) {
       if (!isFinal && this.truncatedChunks.has(chunkId)) return; // already told mobile; nothing new to show
@@ -340,29 +346,18 @@ export class AcpPublisher {
       }
       this.truncatedChunks.add(chunkId);
     }
-    if (isFinal) {
-      this.truncatedChunks.delete(chunkId);
-      this.lastChunkPostAt.delete(chunkId);
-    } else if (!bounded.truncated && bounded.content.length >= STREAMING_CHUNK_COALESCE_MIN_CHARS) {
-      const last = this.lastChunkPostAt.get(chunkId) ?? 0;
-      const wait = STREAMING_CHUNK_COALESCE_WINDOW_MS - (Date.now() - last);
-      if (wait > 0) {
-        // Keep the latest snapshot; one trailing post per window.
-        const timer = setTimeout(() => {
-          const latest = this.pendingChunkPosts.get(chunkId);
-          this.pendingChunkPosts.delete(chunkId);
-          if (latest) void this.postStreamingChunk(latest.event);
-        }, wait);
-        this.pendingChunkPosts.set(chunkId, { timer, event });
-        return;
-      }
-    }
-    await this.postStreamingChunk({ ...event, content: bounded.content });
+    if (isFinal) this.truncatedChunks.delete(chunkId);
+    await this.chunkCoalescer.submit({ ...event, content: bounded.content });
+  }
+
+  /** Send any coalesced streaming-chunk snapshot still waiting, and wait for
+   *  the in-flight ones — so shutdown never loses the latest content. */
+  flushStreamingChunks(): Promise<void> {
+    return this.chunkCoalescer.flush();
   }
 
   private async postStreamingChunk(event: StreamingChunkEvent): Promise<void> {
     const url = `${this.apiBase}/api/sessions/${encodeURIComponent(this.opts.sessionId)}/streaming-chunk`;
-    if (!event.isFinal) this.lastChunkPostAt.set(event.chunkId, Date.now());
     try {
       const { statusCode, body } = await this.postWithReauth(
         url,
