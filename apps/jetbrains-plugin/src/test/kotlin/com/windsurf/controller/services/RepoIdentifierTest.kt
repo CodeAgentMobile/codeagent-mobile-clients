@@ -21,7 +21,7 @@ class RepoIdentifierTest {
     @Test
     fun `identifier interpolates owner and repo`() {
         assertEquals(
-            "CodeAgentMobile/codeagent-mobile-clients",
+            "edgar-durand/codeagent-mobile-clients",
             RepoSlug(owner = "edgar-durand", repo = "codeagent-mobile-clients").identifier,
         )
     }
