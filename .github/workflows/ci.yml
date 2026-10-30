@@ -427,7 +427,8 @@ jobs:
         with:
           name: cli-coverage-${{ github.sha }}
           path: apps/cli/coverage/
-          retention-days: 14
+          # Actions storage is billed: a coverage report is read the day it runs.
+          retention-days: 3
 
   vsc-plugin:
     name: VS Code plugin (${{ matrix.os }})
