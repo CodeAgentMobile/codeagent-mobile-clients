@@ -915,14 +915,16 @@ jobs:
             FOUND=0
             # The registry's read replicas lag a publish — v2.75.1 (2026-09-12)
             # took > 2 min to become visible, so a 6×20 s window called a landed
-            # publish "missing" and skipped the release notes. 15×30 s (7.5 min)
-            # covers the observed tail; a real miss still fails the run.
-            for ATTEMPT in $(seq 1 15); do
+            # publish "missing" and skipped the release notes. Since v2.76.38
+            # (801 versions, a huge packument) codeam-cli takes 10–25 min to show up,
+            # so 7.5 min failed every release (v2.76.39/40, 2026-10-30): 60×30 s (30 min).
+            # A real miss still fails the run.
+            for ATTEMPT in $(seq 1 60); do
               if npm view "$PKG@$VERSION" version >/dev/null 2>&1; then
                 FOUND=1
                 break
               fi
-              echo "… $PKG@$VERSION not on the registry yet (attempt $ATTEMPT/15)"
+              echo "… $PKG@$VERSION not on the registry yet (attempt $ATTEMPT/60)"
               sleep 30
             done
             if [ "$FOUND" = "1" ]; then
