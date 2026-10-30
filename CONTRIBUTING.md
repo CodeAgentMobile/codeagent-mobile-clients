@@ -10,7 +10,7 @@ The backend, mobile app, and web dashboard are not in this repo.
 
 ## Reporting bugs
 
-Use the [issue tracker](https://github.com/edgar-durand/codeagent-mobile-clients/issues/new/choose). The "Bug report" template asks for:
+Use the [issue tracker](https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues/new/choose). The "Bug report" template asks for:
 
 - Which client app (cli / vsc-plugin / jetbrains-plugin)
 - Version
@@ -33,7 +33,7 @@ For a suspected security issue, see [SECURITY.md](SECURITY.md) first — **do no
 ## Local dev loop
 
 ```bash
-git clone https://github.com/edgar-durand/codeagent-mobile-clients.git
+git clone https://github.com/CodeAgentMobile/codeagent-mobile-clients.git
 cd codeagent-mobile-clients
 
 # CLI

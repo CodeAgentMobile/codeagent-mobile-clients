@@ -154,7 +154,7 @@ describe('fleet-docker', () => {
         'CODEAM_HOST_LABEL=CodeAgent Box',
         '-e',
         'CODEAM_ENROLL_EPHEMERAL=1',
-        'ghcr.io/edgar-durand/codeam-box:latest',
+        'ghcr.io/codeagentmobile/codeam-box:latest',
       ]);
       expect(args.some((a) => a.startsWith('CODEAM_ENROLL_TOKEN='))).toBe(false);
     });
@@ -169,15 +169,15 @@ describe('fleet-docker', () => {
 
     it('a registry tag (the dev fleet on `:next`) keeps the registry pull semantics', () => {
       process.env.CODEAM_FLEET_BOX_TAG = 'next';
-      expect(resolveFleetBoxImage()).toBe('ghcr.io/edgar-durand/codeam-box:next');
+      expect(resolveFleetBoxImage()).toBe('ghcr.io/codeagentmobile/codeam-box:next');
       const args = buildFleetBoxRunArgs({ ...BOX, limits: LIMITS });
       expect(args).toContain('--pull=always');
-      expect(args[args.length - 1]).toBe('ghcr.io/edgar-durand/codeam-box:next');
+      expect(args[args.length - 1]).toBe('ghcr.io/codeagentmobile/codeam-box:next');
     });
 
     it('an invalid registry tag falls back to :latest', () => {
       process.env.CODEAM_FLEET_BOX_TAG = 'next; rm -rf /';
-      expect(resolveFleetBoxImage()).toBe('ghcr.io/edgar-durand/codeam-box:latest');
+      expect(resolveFleetBoxImage()).toBe('ghcr.io/codeagentmobile/codeam-box:latest');
     });
 
     it('migrate = the same template as `create`, detached-less and pull-less', () => {

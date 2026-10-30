@@ -3,8 +3,8 @@ import { prefixForProjectKey } from '../../src/beads/project-prefix';
 
 describe('prefixForProjectKey', () => {
   it('is stable for the same key', () => {
-    expect(prefixForProjectKey('github.com/edgar-durand/codeagent-mobile')).toBe(
-      prefixForProjectKey('github.com/edgar-durand/codeagent-mobile'),
+    expect(prefixForProjectKey('github.com/CodeAgentMobile/codeagent-mobile')).toBe(
+      prefixForProjectKey('github.com/CodeAgentMobile/codeagent-mobile'),
     );
   });
 

@@ -344,7 +344,7 @@ instead relaunches itself before exiting (`needsSelfRelaunch`).
 
 NEVER `--privileged`, NEVER a `docker.sock` mount, NEVER a host bind mount — the box's only writable
 surface is the single named volume (identically named to the container). The box image is resolved
-host-side (`resolveFleetBoxImage()`, default `ghcr.io/edgar-durand/codeam-box:latest`, overridable via
+host-side (`resolveFleetBoxImage()`, default `ghcr.io/codeagentmobile/codeam-box:latest`, overridable via
 `CODEAM_FLEET_BOX_IMAGE` for the CI int test's freshly-built local tag) — the wire payload carries no
 image field.
 

@@ -93,7 +93,7 @@ jobs:
         if: steps.gate.outputs.already == 'false'
         env:
           CROSS_REPO_PAT: ${{ secrets.CROSS_REPO_PAT }}
-          PRIVATE_REPO: edgar-durand/codeagent-mobile
+          PRIVATE_REPO: CodeAgentMobile/codeagent-mobile
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
           ISSUE_USER: ${{ github.event.issue.user.login }}

@@ -2,7 +2,7 @@
 
 > **Canonical agent instructions for this repo live in [`CLAUDE.md`](./CLAUDE.md).** Read it first — this file is a cross-tool entry point that points there and surfaces the highest-signal rules inline.
 
-This is the **client-side** repo: `codeam-cli` (npm), the VS Code / Cursor / Windsurf extension, the JetBrains plugin, and `@codeam/shared` (the wire protocol). The backend lives in the sibling [`codeagent-mobile`](https://github.com/edgar-durand/codeagent-mobile) repo.
+This is the **client-side** repo: `codeam-cli` (npm), the VS Code / Cursor / Windsurf extension, the JetBrains plugin, and `@codeam/shared` (the wire protocol). The backend lives in the sibling [`codeagent-mobile`](https://github.com/CodeAgentMobile/codeagent-mobile) repo.
 
 ## Non-negotiables (full detail in CLAUDE.md)
 

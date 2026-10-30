@@ -5,7 +5,7 @@
   "description": "CodeAgent Mobile clients — VS Code / Cursor / Windsurf extension, JetBrains plugin, and codeam-cli",
   "repository": {
     "type": "git",
-    "url": "https://github.com/edgar-durand/codeagent-mobile-clients.git"
+    "url": "https://github.com/CodeAgentMobile/codeagent-mobile-clients.git"
   },
   "license": "MIT",
   "engines": {

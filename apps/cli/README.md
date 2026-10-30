@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/codeam-cli.svg?color=34d399&style=flat-square)](https://www.npmjs.com/package/codeam-cli)
 [![npm downloads](https://img.shields.io/npm/dm/codeam-cli.svg?color=34d399&style=flat-square)](https://www.npmjs.com/package/codeam-cli)
-[![license](https://img.shields.io/npm/l/codeam-cli.svg?color=34d399&style=flat-square)](https://github.com/edgar-durand/codeagent-mobile-clients/blob/main/LICENSE)
+[![license](https://img.shields.io/npm/l/codeam-cli.svg?color=34d399&style=flat-square)](https://github.com/CodeAgentMobile/codeagent-mobile-clients/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/codeam-cli.svg?color=34d399&style=flat-square)](https://nodejs.org/)
 
 > **The workflow-continuity bridge for AI coding agents.**
@@ -198,4 +198,4 @@ This is the same path `codeam deploy` uses inside a freshly-provisioned Codespac
 
 MIT © [Edgar Durand](https://github.com/edgar-durand)
 
-Source: [github.com/edgar-durand/codeagent-mobile-clients](https://github.com/edgar-durand/codeagent-mobile-clients)
+Source: [github.com/CodeAgentMobile/codeagent-mobile-clients](https://github.com/CodeAgentMobile/codeagent-mobile-clients)

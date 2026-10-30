@@ -24,7 +24,7 @@ Dual CJS + ESM with bundled type declarations. `zod` is the only runtime depende
 ## Versioning
 
 Versions in lockstep with the unified client release line: a `vX.Y.Z` tag in
-[`codeagent-mobile-clients`](https://github.com/edgar-durand/codeagent-mobile-clients)
+[`codeagent-mobile-clients`](https://github.com/CodeAgentMobile/codeagent-mobile-clients)
 publishes `@codeam/shared@X.Y.Z` alongside the CLI and IDE plugins.
 
 ## License

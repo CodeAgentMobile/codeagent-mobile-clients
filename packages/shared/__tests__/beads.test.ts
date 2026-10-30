@@ -38,7 +38,7 @@ describe('beads wire types', () => {
         dependency_count: 1,
         dependent_count: 2,
         comment_count: 0,
-        projectKey: 'github.com/edgar-durand/codeagent-mobile-clients',
+        projectKey: 'github.com/CodeAgentMobile/codeagent-mobile-clients',
       }),
     ) as BeadsIssueDto;
 
@@ -100,7 +100,7 @@ describe('beads wire types', () => {
     const payload: BeadsIngestPayload = {
       sessionId: 'sess-1',
       pluginId: 'plug-1',
-      projectKey: 'github.com/edgar-durand/codeagent-mobile-clients',
+      projectKey: 'github.com/CodeAgentMobile/codeagent-mobile-clients',
       projectLabel: 'codeagent-mobile-clients',
       fullSnapshot: true,
       issues: [],
@@ -138,7 +138,7 @@ describe('beads wire types — PR-1 superset decls', () => {
       sessionId: 'sess-1',
       pluginId: 'plug-1',
       status: 'ready',
-      projectKey: 'github.com/edgar-durand/codeagent-mobile-clients',
+      projectKey: 'github.com/CodeAgentMobile/codeagent-mobile-clients',
     };
     expect(payload.status).toBe('ready');
     // detail is optional — a failed frame can carry the reason verbatim.
@@ -167,7 +167,7 @@ describe('beads wire types — PR-1 superset decls', () => {
 
   it('models the backend→app snapshot hop (GET /api/beads/me)', () => {
     const project: BeadsProjectDto = {
-      projectKey: 'github.com/edgar-durand/codeagent-mobile-clients',
+      projectKey: 'github.com/CodeAgentMobile/codeagent-mobile-clients',
       label: 'codeagent-mobile-clients',
       lastSyncedAt: '2026-07-06T00:00:00Z',
     };
@@ -195,7 +195,7 @@ describe('beads wire types — PR-1 superset decls', () => {
     const create: BeadsActionRequest = {
       action: 'create',
       title: 'wire the watcher into the pair path',
-      projectKey: 'github.com/edgar-durand/codeagent-mobile-clients',
+      projectKey: 'github.com/CodeAgentMobile/codeagent-mobile-clients',
     };
     expect(create.title).toBeDefined();
     const remember: BeadsActionRequest = { action: 'remember', text: 'station wins' };

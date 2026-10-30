@@ -5,8 +5,8 @@ const { normalizeOrigin, deriveProjectIdentity, _execSeam } = pk;
 
 describe('normalizeOrigin (D7)', () => {
   it('normalizes an https remote → host/org/repo', () => {
-    expect(normalizeOrigin('https://github.com/edgar-durand/codeagent-mobile-clients.git')).toBe(
-      'github.com/edgar-durand/codeagent-mobile-clients',
+    expect(normalizeOrigin('https://github.com/CodeAgentMobile/codeagent-mobile-clients.git')).toBe(
+      'github.com/CodeAgentMobile/codeagent-mobile-clients',
     );
   });
 
@@ -39,10 +39,10 @@ describe('deriveProjectIdentity', () => {
 
   it('uses the normalized origin as the key and the repo name as the label', () => {
     vi.spyOn(_execSeam, 'exec').mockReturnValue(
-      'https://github.com/edgar-durand/codeagent-mobile-clients.git\n',
+      'https://github.com/CodeAgentMobile/codeagent-mobile-clients.git\n',
     );
     const id = deriveProjectIdentity('/some/repo');
-    expect(id.projectKey).toBe('github.com/edgar-durand/codeagent-mobile-clients');
+    expect(id.projectKey).toBe('github.com/CodeAgentMobile/codeagent-mobile-clients');
     expect(id.projectLabel).toBe('codeagent-mobile-clients');
   });
 

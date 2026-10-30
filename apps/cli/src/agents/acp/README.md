@@ -4,7 +4,7 @@ A single, agent-agnostic runtime that drives any [Agent Client Protocol](https:/
 
 ## Why this exists
 
-The legacy per-agent runtimes spawn the agent in a PTY and parse its TUI output back into typed chunks via hand-tuned regex (chrome detection, selector detection, banner detection, etc.). Every new agent = new parser + tests + ongoing maintenance, and whole classes of bugs (prompt corruption, parser races, stale option metadata — see [`rafaelph#253`](https://github.com/edgar-durand/codeagent-mobile-clients/issues/253), [`rafaelph#255`](https://github.com/edgar-durand/codeagent-mobile-clients/issues/255)) are structurally possible because we're reassembling messages from PTY text.
+The legacy per-agent runtimes spawn the agent in a PTY and parse its TUI output back into typed chunks via hand-tuned regex (chrome detection, selector detection, banner detection, etc.). Every new agent = new parser + tests + ongoing maintenance, and whole classes of bugs (prompt corruption, parser races, stale option metadata — see [`rafaelph#253`](https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues/253), [`rafaelph#255`](https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues/255)) are structurally possible because we're reassembling messages from PTY text.
 
 ACP gives us typed messages straight from the agent — `session/update`, `session/request_permission`, `fs/read_text_file`, `terminal/*`. The same five mapper functions cover every ACP-compatible agent. Adding a new agent is **3 lines** in [`adapters.ts`](./adapters.ts).
 

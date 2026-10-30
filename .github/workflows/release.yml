@@ -272,7 +272,7 @@ jobs:
         env:
           VERSION: ${{ needs.setup.outputs.version }}
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/codeam-box"
+          IMAGE="ghcr.io/codeagentmobile/codeam-box"
           docker build \
             --build-arg "CODEAM_CLI_VERSION=${VERSION}" \
             -t "${IMAGE}:${VERSION}" \
@@ -298,8 +298,8 @@ jobs:
       packages: write
     env:
       VERSION: ${{ needs.setup.outputs.version }}
-      IMAGE: ghcr.io/${{ github.repository_owner }}/codeam-box
-      CANARY_REPO: edgar-durand/codeagent-mobile
+      IMAGE: ghcr.io/codeagentmobile/codeam-box
+      CANARY_REPO: CodeAgentMobile/codeagent-mobile
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -564,7 +564,7 @@ jobs:
             -H "Authorization: Bearer $DISPATCH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/edgar-durand/codeagent-mobile/dispatches \
+            https://api.github.com/repos/CodeAgentMobile/codeagent-mobile/dispatches \
             -d "{\"event_type\":\"cli-released\",\"client_payload\":{\"cliVersion\":\"$VERSION\"}}"
           echo "::notice::Dispatched api-v2-integration for codeam-cli@$VERSION"
 

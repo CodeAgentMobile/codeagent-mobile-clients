@@ -254,7 +254,7 @@ export function isMissingVolumeError(stderr: string): boolean {
 }
 
 /** The registry repo every fleet box image is published to (release.yml `publish-box`). */
-const FLEET_BOX_REPO = 'ghcr.io/edgar-durand/codeam-box';
+const FLEET_BOX_REPO = 'ghcr.io/codeagentmobile/codeam-box';
 
 /** A docker tag: `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. */
 const DOCKER_TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
