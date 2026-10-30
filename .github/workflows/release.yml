@@ -221,6 +221,8 @@ jobs:
         with:
           name: cli-tgz
           path: apps/cli/codeam-cli-${{ needs.setup.outputs.version }}.tgz
+          # The files live on in the GitHub Release; Actions storage is billed.
+          retention-days: 7
 
   # Builds + pushes the CodeAgent Box runtime image (apps/box) to GHCR on every
   # stable tag. Previously a MANUAL `docker build`, which is exactly how the box
@@ -654,6 +656,8 @@ jobs:
           name: vsc-vsix
           path: apps/vsc-plugin/codeagent-mobile-${{ needs.setup.outputs.version }}.vsix
           if-no-files-found: error
+          # The files live on in the GitHub Release; Actions storage is billed.
+          retention-days: 7
 
   publish-jetbrains:
     name: Publish JetBrains plugin
@@ -778,6 +782,8 @@ jobs:
           name: jb-zip
           path: ${{ steps.jb.outputs.zip }}
           if-no-files-found: error
+          # The files live on in the GitHub Release; Actions storage is billed.
+          retention-days: 7
 
   release:
     name: Draft GitHub Release + commit changelog
