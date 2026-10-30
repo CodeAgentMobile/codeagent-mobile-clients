@@ -6,7 +6,7 @@ import {
   type FleetImageInfo,
 } from '../../src/commands/host/fleet-image-gc';
 
-const BOX = 'ghcr.io/edgar-durand/codeam-box';
+const BOX = 'ghcr.io/codeagentmobile/codeam-box';
 const REF = `${BOX}:latest`;
 
 function img(id: string, created: string, repoTags: string[] = [], base = 'sha256:base'): FleetImageInfo {

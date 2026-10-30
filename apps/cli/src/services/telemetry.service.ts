@@ -300,7 +300,7 @@ export function maybePrintFirstRunBanner(): void {
     '\n  codeam-cli sends anonymous + identified usage events to PostHog\n' +
       '  (same project as the mobile + web apps). Opt out at any time:\n' +
       '    export CODEAM_TELEMETRY=0\n' +
-      '  See https://github.com/edgar-durand/codeagent-mobile-clients#telemetry\n\n',
+      '  See https://github.com/CodeAgentMobile/codeagent-mobile-clients#telemetry\n\n',
   );
 }
 

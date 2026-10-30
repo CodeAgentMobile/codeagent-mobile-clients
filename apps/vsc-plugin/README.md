@@ -65,10 +65,10 @@ You need the **CodeAgent Mobile** companion app to send prompts to your IDE:
 
 ## Build from Source
 
-The source lives at [github.com/edgar-durand/codeagent-mobile-clients](https://github.com/edgar-durand/codeagent-mobile-clients).
+The source lives at [github.com/CodeAgentMobile/codeagent-mobile-clients](https://github.com/CodeAgentMobile/codeagent-mobile-clients).
 
 ```bash
-git clone https://github.com/edgar-durand/codeagent-mobile-clients.git
+git clone https://github.com/CodeAgentMobile/codeagent-mobile-clients.git
 cd codeagent-mobile-clients/apps/vsc-plugin
 npm install
 npm run build

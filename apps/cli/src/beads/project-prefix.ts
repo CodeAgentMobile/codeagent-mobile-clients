@@ -15,7 +15,7 @@ import * as crypto from 'crypto';
  *     then `[a-z0-9_]`, bounded length.
  *
  * Shape: `<slug(repo-name)>_<sha8(projectKey)>`, e.g.
- *   `github.com/edgar-durand/codeagent-mobile` → `codeagent_mobile_3f9a1c02`.
+ *   `github.com/CodeAgentMobile/codeagent-mobile` → `codeagent_mobile_3f9a1c02`.
  */
 export function prefixForProjectKey(projectKey: string): string {
   const tail = projectKey.split('/').pop() ?? projectKey;

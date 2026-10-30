@@ -56,7 +56,7 @@ describe('provisionBeads', () => {
     vi.spyOn(_linkSeam, 'ensureDir').mockImplementation(() => undefined);
     vi.spyOn(_provisionSeam, 'ensureSharedServer').mockResolvedValue({ up: true, started: false });
     vi.spyOn(_provisionSeam, 'deriveProjectIdentity').mockReturnValue({
-      projectKey: 'github.com/edgar-durand/codeagent-mobile',
+      projectKey: 'github.com/CodeAgentMobile/codeagent-mobile',
       projectLabel: 'codeagent-mobile',
     });
     // Symlink the resolved bd onto PATH — mocked out so unit runs never touch

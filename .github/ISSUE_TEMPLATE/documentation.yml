@@ -22,7 +22,7 @@ body:
     id: location
     attributes:
       label: Specific link or file path
-      placeholder: "e.g. apps/cli/README.md#pairing or https://github.com/edgar-durand/codeagent-mobile-clients/blob/main/README.md"
+      placeholder: "e.g. apps/cli/README.md#pairing or https://github.com/CodeAgentMobile/codeagent-mobile-clients/blob/main/README.md"
 
   - type: textarea
     id: problem

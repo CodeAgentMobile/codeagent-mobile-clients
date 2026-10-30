@@ -54,12 +54,12 @@
   ],
   "homepage": "https://codeagent-mobile.com",
   "bugs": {
-    "url": "https://github.com/edgar-durand/codeagent-mobile-clients/issues"
+    "url": "https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues"
   },
   "author": "Edgar Durand",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/edgar-durand/codeagent-mobile-clients.git"
+    "url": "git+https://github.com/CodeAgentMobile/codeagent-mobile-clients.git"
   },
   "license": "MIT",
   "publishConfig": {

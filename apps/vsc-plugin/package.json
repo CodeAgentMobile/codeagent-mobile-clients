@@ -36,11 +36,11 @@
   ],
   "homepage": "https://www.codeagent-mobile.com",
   "bugs": {
-    "url": "https://github.com/edgar-durand/codeagent-mobile-clients/issues"
+    "url": "https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/edgar-durand/codeagent-mobile-clients"
+    "url": "https://github.com/CodeAgentMobile/codeagent-mobile-clients"
   },
   "badges": [
     {
@@ -57,7 +57,7 @@
   "sponsor": {
     "url": "https://github.com/sponsors/edgar-durand"
   },
-  "qna": "https://github.com/edgar-durand/codeagent-mobile-clients/issues",
+  "qna": "https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues",
   "license": "MIT",
   "activationEvents": [
     "onStartupFinished"
@@ -122,7 +122,7 @@
         "codeagent-mobile.telemetryEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Send anonymous usage events to PostHog. Disabled automatically when VS Code's global telemetry setting is off. See https://github.com/edgar-durand/codeagent-mobile-clients#telemetry"
+          "description": "Send anonymous usage events to PostHog. Disabled automatically when VS Code's global telemetry setting is off. See https://github.com/CodeAgentMobile/codeagent-mobile-clients#telemetry"
         }
       }
     }

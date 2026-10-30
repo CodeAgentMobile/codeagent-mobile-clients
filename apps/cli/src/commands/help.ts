@@ -36,7 +36,7 @@ export function help(): void {
     '',
     `  ${pc.bold('Links')}`,
     `     ${pc.dim('Docs:')}     ${pc.green('https://www.codeagent-mobile.com')}`,
-    `     ${pc.dim('Issues:')}   ${pc.green('https://github.com/edgar-durand/codeagent-mobile-clients/issues')}`,
+    `     ${pc.dim('Issues:')}   ${pc.green('https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues')}`,
     '',
   ];
   process.stdout.write(lines.join('\n') + '\n');

@@ -55,7 +55,7 @@ jobs:
   smoke:
     name: Authenticated ACP turn per agent
     runs-on: ubuntu-latest
-    if: ${{ github.repository == 'edgar-durand/codeagent-mobile-clients' }}
+    if: ${{ github.repository == 'CodeAgentMobile/codeagent-mobile-clients' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

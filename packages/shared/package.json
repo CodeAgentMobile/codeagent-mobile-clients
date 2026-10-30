@@ -26,12 +26,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/edgar-durand/codeagent-mobile-clients.git",
+    "url": "https://github.com/CodeAgentMobile/codeagent-mobile-clients.git",
     "directory": "packages/shared"
   },
   "homepage": "https://codeagent-mobile.com",
   "bugs": {
-    "url": "https://github.com/edgar-durand/codeagent-mobile-clients/issues"
+    "url": "https://github.com/CodeAgentMobile/codeagent-mobile-clients/issues"
   },
   "scripts": {
     "build": "tsup",

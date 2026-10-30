@@ -3180,7 +3180,7 @@ describe('HostAgentSupervisor — fleet control plane', () => {
 
   it('fleet_create_box builds the full argv with every hard-isolation flag + the ops labels', async () => {
     const { docker, calls, opts } = makeDockerMock();
-    process.env.CODEAM_FLEET_BOX_IMAGE = 'ghcr.io/edgar-durand/codeam-box:test';
+    process.env.CODEAM_FLEET_BOX_IMAGE = 'ghcr.io/codeagentmobile/codeam-box:test';
     const sup = new HostAgentSupervisor(IDENTITY, { docker });
 
     await sup.handleCommand(fleetCreateCmd());
@@ -3196,7 +3196,7 @@ describe('HostAgentSupervisor — fleet control plane', () => {
     // Container identity + image.
     expect(args).toContain('run');
     expect(args[args.indexOf('--name') + 1]).toBe('codeam-box-clu1a2b3c');
-    expect(args[args.length - 1]).toBe('ghcr.io/edgar-durand/codeam-box:test');
+    expect(args[args.length - 1]).toBe('ghcr.io/codeagentmobile/codeam-box:test');
     // Explicit image override (int test / operator) — docker's default pull
     // policy, NEVER --pull=always (a local-only tag would fail to pull).
     expect(args).not.toContain('--pull=always');
@@ -3260,7 +3260,7 @@ describe('HostAgentSupervisor — fleet control plane', () => {
     await sup.handleCommand(fleetCreateCmd());
 
     const run = calls[1];
-    expect(run[run.length - 1]).toBe('ghcr.io/edgar-durand/codeam-box:latest');
+    expect(run[run.length - 1]).toBe('ghcr.io/codeagentmobile/codeam-box:latest');
     // Registry-default image: --pull=always so a new box never silently
     // runs the fleet host's STALE cached :latest (2026-07-16: the cache
     // had CLI 2.61.4 while the registry had 2.61.9).
@@ -3759,7 +3759,7 @@ describe('HostAgentSupervisor — fleet control plane', () => {
   // runs as root on a host holding every rescued user's data.
   // A docker fake that answers the box-image GC queries from a fixture, so the
   // whole `fleet_prune_host` argv sequence can be asserted.
-  const BOX = 'ghcr.io/edgar-durand/codeam-box';
+  const BOX = 'ghcr.io/codeagentmobile/codeam-box';
   const BASE = 'sha256:base';
   function img(id: string, created: string, tags: string[], firstLayer = BASE): string {
     return `${id}|${created}|${tags.join(',')}|${firstLayer},sha256:${id.slice(7)}-top`;

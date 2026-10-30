@@ -4,7 +4,7 @@
 
 If you find a security issue in any of the client apps in this repo, please **do not open a public issue**. Instead, report it privately via one of:
 
-- GitHub's private vulnerability reporting: https://github.com/edgar-durand/codeagent-mobile-clients/security/advisories/new
+- GitHub's private vulnerability reporting: https://github.com/CodeAgentMobile/codeagent-mobile-clients/security/advisories/new
 - Email: **support@codeagent-mobile.com**
 
 Please include:

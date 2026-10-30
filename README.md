@@ -88,7 +88,7 @@ The CLI and VS Code extension share a small TypeScript package (`packages/shared
 Clone, then install per-app dependencies:
 
 ```bash
-git clone https://github.com/edgar-durand/codeagent-mobile-clients.git
+git clone https://github.com/CodeAgentMobile/codeagent-mobile-clients.git
 cd codeagent-mobile-clients
 (cd apps/cli && npm install)
 (cd apps/vsc-plugin && npm install)
