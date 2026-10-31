@@ -97,6 +97,8 @@ beforeEach(() => {
   process.env.CODEAM_PREVIEW_INSPECTOR = '0';
   vi.spyOn(process, 'cwd').mockReturnValue('/tmp/fake-expo');
   vi.spyOn(preview, 'detectMissingNodeDeps').mockReturnValue(null);
+  // The fake project has the web packages: the bring-up installs nothing (see the web tests below).
+  vi.spyOn(preview, 'expoWebDepsInstall').mockReturnValue(null);
   vi.spyOn(preview, 'isPortListening').mockResolvedValue(false);
   vi.spyOn(preview, 'resolveCloudflared').mockResolvedValue('/fake/cloudflared');
   vi.spyOn(preview, 'awaitTunnelRegistered').mockResolvedValue({
@@ -120,7 +122,7 @@ afterEach(() => {
 });
 
 describe('Expo preview over our own cloudflared tunnel', () => {
-  it('brings the tunnel up FIRST, spawns Expo without --tunnel + with the proxy URL, and publishes exps://', async () => {
+  it('brings the tunnel up FIRST, spawns Expo without --tunnel + with the proxy URL, and publishes the web URL + exps://', async () => {
     const { events, emit } = collectEvents();
     await runPreviewStart({
       sessionId: 'sess-expo',
@@ -148,13 +150,20 @@ describe('Expo preview over our own cloudflared tunnel', () => {
     expect(expo.env.DEBUG ?? '').not.toContain('expo:start:server:ngrok');
 
     const ready = events.find((e) => e.type.endsWith('preview_ready'));
-    expect(ready?.payload).toEqual({ url: 'exps://host.example', framework: 'Expo', port: 8081 });
+    // The web build in the frame, Expo Go beside it (owner 2026-10-31).
+    expect(ready?.payload).toEqual({
+      url: 'https://host.example',
+      framework: 'Expo',
+      port: 8081,
+      expoGoUrl: 'exps://host.example',
+    });
 
     // The tunnel is registered on the preview so `killPreview` tears it down.
     const active = preview.activePreviews.get('sess-expo');
     expect(active?.tunnel).toBe(tunnel.child);
     expect(active?.devServer).toBe(expo.child);
-    expect(active?.url).toBe('exps://host.example');
+    expect(active?.url).toBe('https://host.example');
+    expect(active?.expoGoUrl).toBe('exps://host.example');
   }, 30_000);
 
   it('goes READY on the local manifest probe when Expo prints nothing recognisable', async () => {
@@ -176,7 +185,63 @@ describe('Expo preview over our own cloudflared tunnel', () => {
       expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
     const ready = events.find((e) => e.type.endsWith('preview_ready'));
-    expect(ready?.payload.url).toBe('exps://host.example');
+    expect(ready?.payload.url).toBe('https://host.example');
+  }, 30_000);
+
+  it('without the web packages: the install runs first (--no-save) and the web URL is the preview', async () => {
+    devServerScript = `
+      process.stdout.write('Starting Metro Bundler\\n');
+      setInterval(() => {}, 1000);`;
+    vi.spyOn(preview, 'waitForExpoManifest').mockResolvedValue(true);
+    vi.mocked(preview.expoWebDepsInstall).mockReturnValue({
+      cmd: 'npm',
+      args: ['install', '--no-save', 'react-native-web@~0.21.0'],
+    });
+    const install = vi.spyOn(preview, 'runSetupCommand').mockResolvedValue({ status: 'ok', code: 0 });
+
+    const { events, emit } = collectEvents();
+    await runPreviewStart({
+      sessionId: 'sess-expo-web',
+      detection: expoDetection,
+      cwd: '/tmp/fake-expo',
+      emit: emit as never,
+    });
+
+    expect(install.mock.calls[0]?.slice(0, 3)).toEqual([
+      'npm',
+      ['install', '--no-save', 'react-native-web@~0.21.0'],
+      '/tmp/fake-expo',
+    ]);
+    const ready = events.find((e) => e.type.endsWith('preview_ready'));
+    expect(ready?.payload).toEqual({
+      url: 'https://host.example',
+      framework: 'Expo',
+      port: 8081,
+      expoGoUrl: 'exps://host.example',
+    });
+  }, 30_000);
+
+  it('without the web packages: a failed install keeps the Expo Go link alone (the QR surface, as before)', async () => {
+    devServerScript = `
+      process.stdout.write('Starting Metro Bundler\\n');
+      setInterval(() => {}, 1000);`;
+    vi.spyOn(preview, 'waitForExpoManifest').mockResolvedValue(true);
+    vi.mocked(preview.expoWebDepsInstall).mockReturnValue({
+      cmd: 'npm',
+      args: ['install', '--no-save', 'react-native-web'],
+    });
+    vi.spyOn(preview, 'runSetupCommand').mockResolvedValue({ status: 'failed', code: 1 });
+
+    const { events, emit } = collectEvents();
+    await runPreviewStart({
+      sessionId: 'sess-expo-noweb',
+      detection: expoDetection,
+      cwd: '/tmp/fake-expo',
+      emit: emit as never,
+    });
+
+    const ready = events.find((e) => e.type.endsWith('preview_ready'));
+    expect(ready?.payload).toEqual({ url: 'exps://host.example', framework: 'Expo', port: 8081 });
   }, 30_000);
 
   it('tears the tunnel down when Expo dies before it is ready', async () => {

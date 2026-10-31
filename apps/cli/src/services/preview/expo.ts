@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 
@@ -115,4 +116,56 @@ export async function waitForExpoManifest(
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, interval));
   }
+}
+
+/**
+ * The packages `expo start` needs to serve the app on the WEB: `@expo/config` turns the web
+ * platform on when `react-dom` resolves from the project, and Metro then answers a plain
+ * browser `GET /` with the web build (owner 2026-10-31: the console Preview shows the app, not
+ * a QR; the QR stays as "Open in Expo Go").
+ */
+export const EXPO_WEB_PACKAGES = ['react-native-web', 'react-dom', '@expo/metro-runtime'] as const;
+
+export function missingExpoWebPackages(cwd: string): string[] {
+  return EXPO_WEB_PACKAGES.filter(
+    (p) => !fs.existsSync(path.join(cwd, 'node_modules', p, 'package.json')),
+  );
+}
+
+/**
+ * `pkg@version` from the installed SDK's `bundledNativeModules.json` — the versions
+ * `expo install` would pick, so react-dom matches the project's react. A missing or unreadable
+ * file (an SDK we don't know) gives bare names.
+ */
+export function expoWebInstallSpecs(cwd: string, missing: readonly string[]): string[] {
+  let pinned: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(cwd, 'node_modules', 'expo', 'bundledNativeModules.json'), 'utf8'),
+    ) as unknown;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) pinned = raw as Record<string, unknown>;
+  } catch {
+    /* no SDK pin: bare names */
+  }
+  return missing.map((p) => (typeof pinned[p] === 'string' ? `${p}@${String(pinned[p])}` : p));
+}
+
+/**
+ * The install that turns the web preview on, or `null` when nothing is missing. `--no-save`:
+ * the project's package.json and lockfile are the user's — the preview never edits them.
+ */
+export function expoWebDepsInstall(cwd: string): { cmd: string; args: string[] } | null {
+  const missing = missingExpoWebPackages(cwd);
+  if (missing.length === 0) return null;
+  return {
+    cmd: 'npm',
+    args: [
+      'install',
+      '--no-save',
+      '--legacy-peer-deps',
+      '--no-audit',
+      '--no-fund',
+      ...expoWebInstallSpecs(cwd, missing),
+    ],
+  };
 }
