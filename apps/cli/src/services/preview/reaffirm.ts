@@ -40,10 +40,10 @@ export interface PreviewReaffirmDeps {
    * ¿Hay un preview REALMENTE sirviendo ahora mismo? Devuelve sus datos, o
    * `null` si no hay ninguno o su proceso ya murió.
    */
-  serving: () => { url: string; framework: string; port: number } | null;
+  serving: () => { url: string; framework: string; port: number; expoGoUrl?: string } | null;
   /** Re-emite `preview_ready`. Debe ir por el MISMO emisor serializado que las
    *  transiciones, para que una re-afirmación no adelante a un evento real. */
-  emitReady: (payload: { url: string; framework: string; port: number }) => void;
+  emitReady: (payload: { url: string; framework: string; port: number; expoGoUrl?: string }) => void;
   /**
    * Publishes `preview_stopped` once, on the FIRST beat of this process, when
    * nothing is serving. The backend keeps `preview:<sessionId>` for an hour, so

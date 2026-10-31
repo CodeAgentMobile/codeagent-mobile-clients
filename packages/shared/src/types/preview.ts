@@ -143,6 +143,12 @@ export interface PreviewStatus {
   /** Who started it — lets a reconnecting client keep the agent-launch UI. */
   origin?: PreviewOrigin;
   url?: string;
+  /**
+   * Expo only (codeam-cli ≥ 2.76.42): `url` is the WEB preview served by Metro (react-native-web)
+   * and this is the `exps://` link Expo Go opens for the same server. An older CLI sends the
+   * `exps://` link AS `url` and no `expoGoUrl` — the apps keep showing the QR alone for it.
+   */
+  expoGoUrl?: string;
   framework?: string;
   detection?: PreviewDetection;
   error?: { stage: PreviewErrorStage; message: string; code?: PreviewErrorCode };

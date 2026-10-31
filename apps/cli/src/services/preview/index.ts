@@ -42,6 +42,8 @@ export interface ActivePreview {
    *  where nothing of ours fronts the port (codespace port-forwarding). */
   tunnel: ChildProcess | null;
   url: string;
+  /** Expo: the `exps://` link Expo Go opens, beside the web preview in `url`. */
+  expoGoUrl?: string;
   framework: string;
   /** The detection this preview was started from, so a restart can
    *  re-spawn it without re-reading `.codeam/preview.json`. */

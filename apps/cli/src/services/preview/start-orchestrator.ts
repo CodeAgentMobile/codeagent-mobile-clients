@@ -337,6 +337,7 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
       url: existing.url,
       framework: existing.framework,
       port: detection.port,
+      ...(existing.expoGoUrl ? { expoGoUrl: existing.expoGoUrl } : {}),
     });
     return;
   }
@@ -389,6 +390,21 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
 async function runExpoBringUp(ctx: StageCtx): Promise<void> {
   const { detection, emit, emitProgress } = ctx;
 
+  // The WEB preview (owner 2026-10-31): Metro serves the app to a browser once `react-dom`
+  // resolves from the project, so the web packages are installed first (`--no-save`, the
+  // project's package.json is the user's). Best-effort: without them the preview is the Expo Go
+  // QR alone, as before.
+  const webInstall = previewSvc.expoWebDepsInstall(ctx.cwd);
+  let web = webInstall === null;
+  if (webInstall) {
+    emitProgress('SETUP_RUN', `${webInstall.cmd} ${webInstall.args.join(' ')} (Expo web preview)`);
+    const r = await previewSvc.runSetupCommand(webInstall.cmd, webInstall.args, ctx.cwd, detection.env, {
+      timeoutMs: INSTALL_TIMEOUT_MS,
+    });
+    web = r.status === 'ok';
+    if (!web) emitProgress('SETUP_RUN', `web packages not installed (${r.status}) — Expo Go only`);
+  }
+
   emitProgress('TUNNEL_STARTING', `cloudflared quick tunnel → Expo :${detection.port}`);
   const pub = await bringUpPublicUrl(ctx, detection.port);
   if (!pub.ok) {
@@ -404,8 +420,11 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
     return;
   }
 
+  const expoGoUrl = previewSvc.expoGoDeepLink(pub.url);
   announceReady(ctx, dev, {
-    url: previewSvc.expoGoDeepLink(pub.url),
+    // The web build in the frame + Expo Go beside it; an SDK without web deps keeps the QR alone.
+    url: web ? pub.url : expoGoUrl,
+    expoGoUrl: web ? expoGoUrl : undefined,
     tunnel: pub.tunnel,
     // No inspector: a DOM inspector means nothing against a native app.
     inspector: null,
@@ -422,6 +441,7 @@ function announceReady(ctx: StageCtx, dev: DevServerUp, tun: TunnelUp): void {
     tunnel: tun.tunnel,
     inspector: tun.inspector,
     url: tun.url,
+    expoGoUrl: tun.expoGoUrl,
     framework: detection.framework,
     detection,
     cwd: ctx.cwd,
@@ -443,6 +463,7 @@ function announceReady(ctx: StageCtx, dev: DevServerUp, tun: TunnelUp): void {
     url: tun.url,
     framework: detection.framework,
     port: detection.port,
+    ...(tun.expoGoUrl ? { expoGoUrl: tun.expoGoUrl } : {}),
   });
 }
 
@@ -696,6 +717,7 @@ async function startDevServer(
         url: raceExisting.url,
         framework: raceExisting.framework,
         port: detection.port,
+        ...(raceExisting.expoGoUrl ? { expoGoUrl: raceExisting.expoGoUrl } : {}),
       });
       return null;
     }
@@ -918,6 +940,8 @@ async function startDevServer(
 /** What stage 3 hands back for registration. */
 interface TunnelUp {
   url: string;
+  /** Expo: the `exps://` link Expo Go opens, beside the web preview in `url`. */
+  expoGoUrl?: string;
   /** The cloudflared child fronting the dev server (or the inspector proxy). */
   tunnel: ReturnType<typeof spawn>;
   /**

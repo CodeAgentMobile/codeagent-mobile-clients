@@ -2215,6 +2215,7 @@ export function makePreviewReaffirm(args: {
         url: active.url,
         framework: active.framework,
         port: active.detection.port,
+        ...(active.expoGoUrl ? { expoGoUrl: active.expoGoUrl } : {}),
       };
     },
     emitReady: (payload) => {
