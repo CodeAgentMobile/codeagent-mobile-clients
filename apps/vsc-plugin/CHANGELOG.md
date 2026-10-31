@@ -4,6 +4,13 @@ All notable changes to the CodeAgent Mobile VS Code extension are documented her
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.41] — 2026-10-31
+
+### CI
+
+- **release:** Wait up to 30 min for npm to serve codeam-cli (#1005)
+- Keep artifacts days, not months (Actions storage) (#1006)
+
 ## [2.76.38] — 2026-10-29
 
 ### Performance
