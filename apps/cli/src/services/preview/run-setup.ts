@@ -1,4 +1,7 @@
 import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { log } from '../logger';
 import { killQuiet } from '../../lib/quiet';
 
@@ -25,6 +28,47 @@ export type SetupRunResult =
  * forever. Bounding it lets the caller surface a `preview_error`
  * instead of hanging — we kill the child and report `timeout`.
  */
+/**
+ * npm's cache, when the configured one (`npm_config_cache`, the Box image's /opt/npm-cache) holds
+ * entries another user owns: a cache of our own under HOME. A root-owned entry makes npm fail
+ * EVERY install with EACCES, and a `--cap-drop ALL` container can't chown it away (the 2026-10-31
+ * v2.76.41 Box image: its Expo bake ran npm as root into the box's cache). `{}` = nothing to change.
+ */
+export function npmCacheOverride(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+  ownerUid: (p: string) => number | null = (p) => {
+    try {
+      return fs.statSync(p).uid;
+    } catch {
+      return null;
+    }
+  },
+  uid: number | undefined = process.getuid?.(),
+): Record<string, string> {
+  const cache = env.npm_config_cache;
+  if (!cache || uid === undefined) return {};
+  const foreign = (p: string): boolean => {
+    const owner = ownerUid(p);
+    return owner !== null && owner !== uid;
+  };
+  const roots = [cache, path.join(cache, '_cacache'), path.join(cache, '_logs')];
+  const indexes = [
+    path.join(cache, '_cacache', 'index-v5'),
+    path.join(cache, '_cacache', 'content-v2', 'sha512'),
+  ];
+  const entries = indexes.flatMap((d) => {
+    try {
+      return fs.readdirSync(d).map((e) => path.join(d, e));
+    } catch {
+      return [];
+    }
+  });
+  return [...roots, ...indexes, ...entries].some(foreign)
+    ? { npm_config_cache: path.join(home, '.npm') }
+    : {};
+}
+
 export function runSetupCommand(
   cmd: string,
   args: string[],
@@ -35,7 +79,7 @@ export function runSetupCommand(
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd,
-      env: { ...process.env, ...(env ?? {}) },
+      env: { ...process.env, ...npmCacheOverride(), ...(env ?? {}) },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

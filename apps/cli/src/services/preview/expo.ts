@@ -133,6 +133,43 @@ export function missingExpoWebPackages(cwd: string): string[] {
 }
 
 /**
+ * `expo` itself, when the project doesn't have it, then the web packages. A project without
+ * `expo` is a Remix MOBILE project's export (its package.json declared only `expo-*` modules
+ * until 2026-10-31) or an app a model wrote: `expo start` can't even read the SDK without it
+ * ("Cannot determine the project's Expo SDK version because the module `expo` is not installed").
+ */
+export function missingExpoPackages(cwd: string): string[] {
+  const core = fs.existsSync(path.join(cwd, 'node_modules', 'expo', 'package.json'))
+    ? []
+    : ['expo'];
+  return [...core, ...missingExpoWebPackages(cwd)];
+}
+
+/** Expo SDK by the react-native the project has — what `bundledNativeModules.json` says once `expo` is in. */
+const EXPO_SDK_BY_REACT_NATIVE: Readonly<Record<string, string>> = {
+  '0.76': '52',
+  '0.79': '53',
+  '0.81': '54',
+};
+/** The web packages of the SDKs we ship apps on (SDK 54's `bundledNativeModules.json`). */
+const WEB_PACKAGES_BY_SDK: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  '54': { 'react-native-web': '~0.21.0', 'react-dom': '19.1.0', '@expo/metro-runtime': '~6.1.2' },
+};
+
+/** The project's Expo SDK major from its installed react-native, or null when unknown. */
+export function expoSdkOf(cwd: string): string | null {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(cwd, 'node_modules', 'react-native', 'package.json'), 'utf8'),
+    ) as { version?: unknown };
+    const m = typeof raw.version === 'string' ? /^(\d+\.\d+)\./.exec(raw.version) : null;
+    return m ? (EXPO_SDK_BY_REACT_NATIVE[m[1]] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `pkg@version` from the installed SDK's `bundledNativeModules.json` — the versions
  * `expo install` would pick, so react-dom matches the project's react. A missing or unreadable
  * file (an SDK we don't know) gives bare names.
@@ -143,11 +180,18 @@ export function expoWebInstallSpecs(cwd: string, missing: readonly string[]): st
     const raw = JSON.parse(
       fs.readFileSync(path.join(cwd, 'node_modules', 'expo', 'bundledNativeModules.json'), 'utf8'),
     ) as unknown;
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) pinned = raw as Record<string, unknown>;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw))
+      pinned = raw as Record<string, unknown>;
   } catch {
-    /* no SDK pin: bare names */
+    /* no `expo` yet: the SDK comes from react-native, below */
   }
-  return missing.map((p) => (typeof pinned[p] === 'string' ? `${p}@${String(pinned[p])}` : p));
+  const sdk = expoSdkOf(cwd);
+  const web = sdk ? (WEB_PACKAGES_BY_SDK[sdk] ?? {}) : {};
+  return missing.map((p) => {
+    if (typeof pinned[p] === 'string') return `${p}@${String(pinned[p])}`;
+    if (p === 'expo') return sdk ? `expo@~${sdk}.0.0` : 'expo';
+    return web[p] ? `${p}@${web[p]}` : p;
+  });
 }
 
 /**
@@ -155,7 +199,7 @@ export function expoWebInstallSpecs(cwd: string, missing: readonly string[]): st
  * the project's package.json and lockfile are the user's — the preview never edits them.
  */
 export function expoWebDepsInstall(cwd: string): { cmd: string; args: string[] } | null {
-  const missing = missingExpoWebPackages(cwd);
+  const missing = missingExpoPackages(cwd);
   if (missing.length === 0) return null;
   return {
     cmd: 'npm',

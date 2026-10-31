@@ -398,9 +398,15 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
   let web = webInstall === null;
   if (webInstall) {
     emitProgress('SETUP_RUN', `${webInstall.cmd} ${webInstall.args.join(' ')} (Expo web preview)`);
-    const r = await previewSvc.runSetupCommand(webInstall.cmd, webInstall.args, ctx.cwd, detection.env, {
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
+    const r = await previewSvc.runSetupCommand(
+      webInstall.cmd,
+      webInstall.args,
+      ctx.cwd,
+      detection.env,
+      {
+        timeoutMs: INSTALL_TIMEOUT_MS,
+      },
+    );
     web = r.status === 'ok';
     if (!web) emitProgress('SETUP_RUN', `web packages not installed (${r.status}) — Expo Go only`);
   }
@@ -833,7 +839,13 @@ async function startDevServer(
     // never shows its "Serving HTTP on … (http://0.0.0.0:8000/)" line while it
     // already serves — every such preview ended in a 120 s ready_timeout
     // (codeagent-nczt.9). First, so the project's own env can still override it.
-    env: { PYTHONUNBUFFERED: '1', ...process.env, ...(spawnable.env ?? {}), ...extraEnv },
+    env: {
+      PYTHONUNBUFFERED: '1',
+      ...process.env,
+      ...previewSvc.npmCacheOverride(),
+      ...(spawnable.env ?? {}),
+      ...extraEnv,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
     // POSIX: lead a new process group so teardown can SIGTERM the whole
     // tree. Dev servers fork worker children that bind the port; killing

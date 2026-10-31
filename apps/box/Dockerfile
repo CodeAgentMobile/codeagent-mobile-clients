@@ -323,15 +323,24 @@ RUN install -d -o box -g box /opt/npm-cache /opt/uv-cache /opt/uv-tools \
 # react-native-web, @expo/metro-runtime, expo-status-bar — resolved by `expo install`, so the
 # versions match the SDK), so the project's `npm install` reads tarballs from disk. Same
 # never-fails-the-build contract as mcp-warm: a MISS means a slower first preview, not a broken box.
-RUN npm install -g expo \
+# ⚠️ Root's npm runs use THEIR OWN cache: `npm_config_cache` (above) points at /opt/npm-cache, the
+# box user's cache, and a root-owned entry in it breaks EVERY later `npm install` of the box
+# (EACCES on `_cacache/index-v5/…`, unfixable inside a `--cap-drop ALL` container — the
+# 2026-10-31 v2.76.41 image: the Expo bake ran `npm install -g expo` as root into it).
+RUN npm_config_cache=/tmp/npm-build-cache npm install -g expo \
+    && rm -rf /tmp/npm-build-cache \
     && chown -R box:box /usr/local/lib/node_modules /usr/local/bin \
     && su box -s /bin/sh -c 'set -e; HOME=/home/box; export HOME; d=$(mktemp -d); cd "$d"; \
          printf "{\"name\":\"expo-prewarm\",\"private\":true}" > package.json; \
          npm install --no-audit --no-fund --legacy-peer-deps expo@latest; \
          npx --no-install expo install react react-native react-dom react-native-web @expo/metro-runtime expo-status-bar; \
          cd /; rm -rf "$d"' \
+    && chown -R box:box /opt/npm-cache \
     && echo "expo: OK $(expo --version)" \
     || echo "expo: MISS (the first Expo preview downloads it)"
+
+# The box's npm cache belongs to the box, every entry of it — the build fails otherwise (above).
+RUN test -z "$(find /opt/npm-cache ! -user box -print -quit)"
 
 # ── PATH: expose the curl-installer bin dirs under the runtime HOME=/home/box ─
 ENV PATH="/opt/agents/.local/bin:/opt/agents/.kimi-code/bin:/opt/agents/bin:${PATH}"
