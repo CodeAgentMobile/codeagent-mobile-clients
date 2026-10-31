@@ -315,6 +315,24 @@ RUN install -d -o box -g box /opt/npm-cache /opt/uv-cache /opt/uv-tools \
     && (command -v uv >/dev/null 2>&1 && echo "  OK   $(uv --version)" || echo "  MISS uv") \
     && su box -s /bin/sh -c 'HOME=/home/box codeam mcp-warm' || true
 
+# ── Expo, baked (owner 2026-10-31) ─────────────────────────────────────────
+# The in-app Preview of an Expo project ran `npx expo start`, which first downloaded the
+# Expo CLI ("npm warn exec … expo@58 … will be installed") and then needed the project's own
+# `expo` package. Both are prepared here: the `expo` CLI is global, and the npm cache holds a
+# current Expo SDK app's whole dependency tree (expo, react-native, react, react-dom,
+# react-native-web, @expo/metro-runtime, expo-status-bar — resolved by `expo install`, so the
+# versions match the SDK), so the project's `npm install` reads tarballs from disk. Same
+# never-fails-the-build contract as mcp-warm: a MISS means a slower first preview, not a broken box.
+RUN npm install -g expo \
+    && chown -R box:box /usr/local/lib/node_modules /usr/local/bin \
+    && su box -s /bin/sh -c 'set -e; HOME=/home/box; export HOME; d=$(mktemp -d); cd "$d"; \
+         printf "{\"name\":\"expo-prewarm\",\"private\":true}" > package.json; \
+         npm install --no-audit --no-fund --legacy-peer-deps expo@latest; \
+         npx --no-install expo install react react-native react-dom react-native-web @expo/metro-runtime expo-status-bar; \
+         cd /; rm -rf "$d"' \
+    && echo "expo: OK $(expo --version)" \
+    || echo "expo: MISS (the first Expo preview downloads it)"
+
 # ── PATH: expose the curl-installer bin dirs under the runtime HOME=/home/box ─
 ENV PATH="/opt/agents/.local/bin:/opt/agents/.kimi-code/bin:/opt/agents/bin:${PATH}"
 

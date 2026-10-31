@@ -49,9 +49,28 @@ import path from 'path';
  * Non-Node projects (no `package.json`) return null and let the
  * agent's `setup_commands` cover Python / Ruby / Go / Rust.
  */
+/**
+ * A declared dependency with no folder under node_modules/. A node_modules/ that exists but was
+ * built from another package.json (a scratch Box whose agent added `expo` after an earlier
+ * install, 2026-10-31: `npx expo start` → "the module `expo` is not installed") used to count
+ * as installed, and the preview died with ERR_SPAWN_FAILED instead of installing first.
+ */
+export function missingDeclaredDep(cwd: string): string | null {
+  let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')) as typeof pkg;
+  } catch {
+    return null;
+  }
+  for (const name of Object.keys({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) })) {
+    if (!fs.existsSync(path.join(cwd, 'node_modules', name, 'package.json'))) return name;
+  }
+  return null;
+}
+
 export function detectMissingNodeDeps(cwd: string): { cmd: string; args: string[] } | null {
   if (!fs.existsSync(path.join(cwd, 'package.json'))) return null;
-  if (fs.existsSync(path.join(cwd, 'node_modules'))) return null;
+  if (fs.existsSync(path.join(cwd, 'node_modules')) && missingDeclaredDep(cwd) === null) return null;
   if (fs.existsSync(path.join(cwd, 'yarn.lock'))) {
     return { cmd: 'yarn', args: ['install'] };
   }
