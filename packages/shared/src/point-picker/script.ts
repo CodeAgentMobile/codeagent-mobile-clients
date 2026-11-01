@@ -147,8 +147,10 @@ export function pointPickerScript(opts: PointPickerOptions): string {
 
   // Inside a React Native WebView the document is TOP-LEVEL (window.parent ===
   // window), so the only way out is the bridge RN injects. It carries STRINGS.
+  // Any mode may answer through it: the host app owns the WebView, there is no
+  // third party to keep out — only the control API (the door below) needs
+  // \`globalName\`, because a global turns the picker on with nobody's permission.
   function rnBridge() {
-    if (!GLOBAL) return null;
     var rn = W.ReactNativeWebView;
     return rn && typeof rn.postMessage === 'function' ? rn : null;
   }
@@ -159,13 +161,17 @@ export function pointPickerScript(opts: PointPickerOptions): string {
     msg[FIELD] = CH;
     msg.type = type;
     if (extra) for (var k in extra) msg[k] = extra[k];
+    // A parent window first (the feed framing the app; a host that installed
+    // one); only a top-level document falls back to the React Native bridge
+    // (2026-11-01: Remix's phone app got no \`on\` and no \`pick\` here).
+    if (W.parent !== W) {
+      try { W.parent.postMessage(msg, driver); } catch (e) {}
+      return;
+    }
     var rn = rnBridge();
     if (rn) {
       try { rn.postMessage(JSON.stringify(msg)); } catch (e) {}
-      return;
     }
-    if (W.parent === W) return;
-    try { W.parent.postMessage(msg, driver); } catch (e) {}
   }
 
   function clip(s, max) { return s.length > max ? s.slice(0, max - 1) + '\\u2026' : s; }
