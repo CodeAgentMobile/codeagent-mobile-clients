@@ -103,7 +103,9 @@ function mount(options: PointPickerOptions, o: MountOpts = {}) {
   const message = (data: Record<string, unknown>, origin = PARENT, source: unknown = parent) => {
     const ev = new win.MessageEvent('message', { data: { [field]: options.channel, ...data } });
     Object.defineProperty(ev, 'origin', { value: origin });
-    Object.defineProperty(ev, 'source', { value: o.rn ? null : source });
+    // A top-level WebView: the host dispatches from the window itself (its own parent); a
+    // caller passing `win` says so, the default stands for "not the parent".
+    Object.defineProperty(ev, 'source', { value: o.rn && source === parent ? null : source });
     win.dispatchEvent(ev);
   };
   /** The page's element (must exist). */
@@ -174,6 +176,20 @@ describe('pointPickerScript — single mode (Remix)', () => {
     const h = mount({ ...REMIX, globalName: undefined }, { rn: true });
     expect(h.win.__codeamInspector).toBeUndefined();
     expect(Object.isFrozen(h.win.__remixPoint)).toBe(true);
+  });
+
+  it("inside a React Native WebView (the phone's Point at it) it answers over the bridge, no API needed", () => {
+    // Remix's phone app drives the picker with an `enable` dispatched from the window itself (its
+    // parent) and reads `ReactNativeWebView.postMessage`; before 2026-11-01 `send` dropped every
+    // reply of a top-level document without `globalName`, so the phone never saw `on` nor `pick`.
+    const h = mount({ ...REMIX, globalName: undefined }, { rn: true, html: '<button id="go" data-box="10"><span>Start</span></button>' });
+    h.message({ type: 'enable', accent: '#FF5A1F' }, PARENT, h.win);
+    expect(h.sent[0]).toEqual({ msg: { channel: 'remix-point', type: 'on' }, origin: 'rn' });
+    h.tap(h.q('#go span'));
+    expect(h.types()).toEqual(['on', 'pick']);
+    expect(h.picks()[0]).toMatchObject({ tag: 'button', id: 'go', text: 'Start' });
+    expect(h.sent[1].origin).toBe('rn');
+    expect(h.win.__codeamInspector).toBeUndefined();
   });
 });
 
