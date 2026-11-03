@@ -13,6 +13,30 @@ This repo holds the **client-side pieces** of [CodeAgent Mobile](https://www.cod
 
 The backend, mobile app, and web dashboard are maintained elsewhere and are not in scope here.
 
+## Atención al detalle y buen gusto — no negociable (owner, 2026-11-02)
+
+**Todo lo que ve un usuario se diseña; nunca se rellena.** Una pantalla fea, tosca o a medio
+pensar es un bug aunque funcione, y lo es igual en lo que genera el producto (juegos, apps de
+Remix): un resultado que no parece profesional no está terminado.
+
+- **Reutiliza antes de construir.** Antes de crear una UI, busca el componente que ya hace ese
+  trabajo (buscador, tarjeta de app, sheet, lista, estados vacío/carga/error) y úsalo. Nunca una
+  versión casera "parecida": dos componentes que se parecen son una deuda y una incoherencia visual.
+- **Míralo antes de entregarlo.** Captura en móvil y escritorio, con datos reales y casos feos:
+  títulos largos, dos elementos con el mismo nombre, lista vacía, cargando, error, teclado. Un test
+  verde no significa "se ve bien". Si no pudiste verlo, dilo; no lo des por bueno.
+- **Lista mínima:** nada recortado ni solapado; cada elemento identificable (dos apps con el mismo
+  título se distinguen por su descripción, autor o tipo); la jerarquía tipográfica, los colores, el
+  radio y la curva de animación de la casa; estados de carga, vacío y error diseñados; foco y
+  teclado; `prefers-reduced-motion`.
+- **La prisa no justifica la fealdad.** Si no hay tiempo para hacerlo bien, dilo y pregunta; no
+  entregues algo feo para "cerrar" la tarea.
+
+Ejemplo real (2026-11-02): el "Enter an app you made" del reto semanal se entregó como una lista de
+botones con solo el título (título del panel recortado, dos "Pesca Tranquila" idénticas, sin
+contexto), cuando el producto ya tenía la búsqueda con tarjetas de app. Se rehízo reutilizando ese
+componente (`SearchFrame` + `AppResultCard`, `apps/landing/src/components/remix/SearchFrame.tsx`).
+
 ## Cuestiona lo que se te pide cuando veas algo mejor
 
 **Si el usuario propone A y ves que B es mejor, DILO antes de construir A.** No

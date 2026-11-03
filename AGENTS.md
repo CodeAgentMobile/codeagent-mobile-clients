@@ -6,6 +6,7 @@ This is the **client-side** repo: `codeam-cli` (npm), the VS Code / Cursor / Win
 
 ## Non-negotiables (full detail in CLAUDE.md)
 
+- **Atención al detalle y buen gusto:** todo lo que ve un usuario (y todo lo que genera el producto) se diseña, nunca se rellena. Reutiliza el componente que ya existe antes de crear uno "parecido", y mira el resultado en móvil y escritorio con datos reales antes de entregarlo. Sección completa en `CLAUDE.md` → "Atención al detalle y buen gusto".
 - **Releases are tag-triggered:** all three clients ship under ONE version line. `git tag vX.Y.Z && git push origin vX.Y.Z` publishes npm + VS Code Marketplace + Open VSX + JetBrains. Commits to `main` run CI but do NOT release.
 - **Protocol code is shared:** parsing / pricing / chunk shapes change ONLY in `packages/shared` (`@codeam/shared`); both CLI and VS Code import through it.
 - **No polling for realtime:** react inside the PTY/SSE event (`OutputService.push`), don't add `setTimeout` "check again" loops. The HTTP-polling fallback in `command-relay.service.ts` is the one documented exception.
