@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codeagent-mobile",
   "version": "1.1.0",
-  "description": "Build and remix live apps by describing them, and start, supervise and review your AI coding agents from a conversation.",
+  "description": "Build and remix live apps by describing them, and start, supervise and review your coding agents from a conversation.",
   "author": {
     "name": "CodeAgent Mobile",
     "email": "support@codeagent-mobile.com",
@@ -26,7 +26,7 @@
       "interface": {
         "displayName": "CodeAgent Mobile",
         "shortDescription": "Build live apps, run AI agents",
-        "longDescription": "Describe an app and CodeAgent builds it: a live web app, a shared app or a native phone app, ready to use and share by link. Before anything starts you see what will be built and its price, and your first app is free. The build card shows its progress until the app is ready to open. You can also search CodeAgent Remix, a feed where every post is a live app, for apps other people made, and remix any of them by describing a change.\n\nFor developers, the same connection supervises your AI coding agents (Claude Code, Codex, Cursor, Gemini and more) in dedicated sessions: start a task or send a new instruction, answer the questions the agent asks, stop it, read the changes it made and open a pull request. Hand a session to your phone when you step away and keep going from the CodeAgent Mobile app.\n\nBuilding or remixing an app never starts without your confirmation of the price, and switching a session to another agent always asks first.\n\nBuilding apps needs only a free CodeAgent account. The coding-agent tools need at least one paired session (local CLI, GitHub Codespace, CodeAgent Box or self-hosted server).",
+        "longDescription": "Describe an app and CodeAgent builds it: a live web app, a shared app or a native phone app, ready to use and share by link. Before anything starts you see what will be built and confirm it. The build card shows its progress until the app is ready to open. You can also search CodeAgent Remix, a feed where every post is a live app, for apps other people made, and remix any of them by describing a change.\n\nFor developers, the same connection supervises the coding agents linked to your CodeAgent account in dedicated sessions: start a task or send a new instruction, answer the questions the agent asks, stop it, read the changes it made and open a pull request. Hand a session to your phone when you step away and keep going from the CodeAgent Mobile app.\n\nBuilding or remixing an app never starts without your confirmation, and switching a session to another agent always asks first.\n\nBuilding apps needs only a CodeAgent account. The coding-agent tools need at least one paired session (local CLI, GitHub Codespace, CodeAgent Box or self-hosted server).",
         "developerName": "CodeAgent Mobile",
         "category": "Developer Tools",
         "capabilities": [
