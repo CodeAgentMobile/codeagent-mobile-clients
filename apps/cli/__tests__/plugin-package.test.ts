@@ -31,7 +31,7 @@ describe('plugin/openai package', () => {
   });
   it('every skill has frontmatter name/description and stays under 256 KiB', () => {
     const skills = fs.readdirSync(path.join(ROOT, 'skills'));
-    expect(skills.sort()).toEqual(['continue-with-codeagent-credits', 'review-agent-work', 'start-coding-task', 'supervise-session']);
+    expect(skills.sort()).toEqual(['build-and-remix-apps', 'continue-with-codeagent-credits', 'review-agent-work', 'start-coding-task', 'supervise-session']);
     for (const s of skills) {
       const md = read(`skills/${s}/SKILL.md`);
       expect(md.length).toBeLessThan(256 * 1024);
