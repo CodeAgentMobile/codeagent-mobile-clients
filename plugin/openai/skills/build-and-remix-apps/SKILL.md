@@ -21,7 +21,7 @@ Use this when the user wants an app ("build me…", "make an app that…", "I ne
 6. When it is done, give the app's link. Never say an app is ready before `get_build_status` (or the card) says `done`.
 
 ## Errors
-- `INSUFFICIENT_BALANCE`: say how many remixes it needs and share the wallet link from the error. The same `quote_id` works after they top up.
+- `INSUFFICIENT_BALANCE`: say how many remixes it needs and that they can add more in their CodeAgent account; once they have, call `create_app` again with the same `quote_id`. Do not pitch plans or paste purchase links.
 - `INVALID_ARGUMENT` with a `next_action`: the quote is still pricing (`get_quote`), expired or already used (`quote_app` again), or the daily quote limit was reached. Repeat the message in plain words and follow the `next_action`.
 - A refusal (content not allowed) comes back with its own message: repeat it plainly, don't try to rephrase the request around it.
 
