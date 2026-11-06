@@ -1,15 +1,19 @@
 /**
  * Regression (codeagent-6bg9) — Antigravity (`agy acp`) reports a provider /
- * auth failure as a NORMAL agent message chunk ("⚠ Agent execution terminated
- * due to error." + the provider's detail) followed by a clean `end_turn`, not a
- * JSON-RPC error. None of the throw/exit failure paths see it, so before the
- * fix the raw text was rendered as the agent's reply: no re-auth bubble, and
- * the LinkedAgent credential was never flagged invalid.
+ * auth failure as a NORMAL completed turn. Live capture (CodeAgent Box, agy
+ * 1.5.2, GEMINI_API_KEY = an invalid key, 2026-11-06): the ONLY streamed text is
+ * `⚠ Agent execution terminated due to error.\n`, `session/prompt` resolves
+ * `{"stopReason":"end_turn"}`, nothing on stderr. The cause is only in agy's
+ * own log, `~/.gemini/antigravity-cli/log/acp-server-<ts>-<pid>.log`.
  *
- * Observed when agy was added: a fake API key fails the turn with text that
- * includes "API key not valid". The fixtures below reproduce that shape.
+ * Before the fix the banner was rendered as the agent's reply: no re-auth
+ * bubble, credential never flagged invalid. The fixtures reproduce that exact
+ * shape — banner-only reply, the detail in a fake agy log in a tmp HOME.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { AcpPublisher } from '../../../src/agents/acp/publisher';
 import {
   StreamingState,
@@ -17,7 +21,10 @@ import {
   AUTH_FAILURE_MESSAGE,
   TURN_FAILURE_MESSAGE,
 } from '../../../src/agents/acp/runner';
-import { classifyAntigravityReply } from '../../../src/agents/acp/agent-hooks';
+import {
+  resetCurrentAgentEnvForTests,
+  setCurrentAgentEnv,
+} from '../../../src/agents/current-agent-env';
 
 vi.mock('../../../src/services/pairing.service', () => ({
   postTurnEvent: vi.fn().mockResolvedValue(undefined),
@@ -25,18 +32,43 @@ vi.mock('../../../src/services/pairing.service', () => ({
   _postJsonAuthed: vi.fn(),
 }));
 
-const AGY_INVALID_KEY =
-  '⚠ Agent execution terminated due to error.\n\n' +
-  'API key not valid. Please pass a valid API key.';
-const AGY_EXPIRED_OAUTH =
-  '⚠ Agent execution terminated due to error.\n\n' +
-  'Request had invalid authentication credentials. Expected OAuth 2 access token, ' +
-  'login cookie or other valid authentication credential.';
-const AGY_GENERIC_ERROR = '⚠ Agent execution terminated due to error.';
+/** Exactly what agy streams on a failed turn — nothing else. */
+const AGY_BANNER = '⚠ Agent execution terminated due to error.\n';
+
+/** glog prefix for `at` in local time, like agy writes it. */
+function glog(sev: string, at: Date, msg: string): string {
+  const p = (n: number, w = 2): string => String(n).padStart(w, '0');
+  const ts =
+    `${p(at.getMonth() + 1)}${p(at.getDate())} ${p(at.getHours())}:${p(at.getMinutes())}:` +
+    `${p(at.getSeconds())}.${p(at.getMilliseconds() * 1000, 6)}`;
+  return `${sev}${ts} 233 ${msg}`;
+}
+
+/** The real entry agy 1.5.2 logged for an invalid GEMINI_API_KEY. */
+const INVALID_KEY_ENTRY =
+  'errorreport.go:247] agent executor error: generating and executing: Error 400, Message: ' +
+  'API key not valid. Please pass a valid API key., Status: INVALID_ARGUMENT, Details: ' +
+  '[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID",' +
+  '"domain":"googleapis.com"}]';
+const NON_AUTH_ENTRY =
+  'errorreport.go:247] agent executor error: generating and executing: Error 500, Message: ' +
+  'Internal error encountered., Status: INTERNAL';
+
+let home: string;
+
+/** Append agy log lines to the newest acp-server log in the tmp HOME. */
+function writeAgyLog(lines: string[]): void {
+  const dir = path.join(home, '.gemini', 'antigravity-cli', 'log');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(
+    path.join(dir, 'acp-server-20261106_181600-233.log'),
+    lines.map((l) => `${l}\n`).join(''),
+  );
+}
 
 type OutputCall = { type?: string; content?: string; done?: boolean };
 
-function makeHarness(agent: string, replyText: string) {
+function makeHarness(agent: string, replyText: string, onPrompt?: () => void) {
   const publisher = new AcpPublisher({
     sessionId: 'sess-1',
     pluginId: 'plugin-1',
@@ -52,6 +84,8 @@ function makeHarness(agent: string, replyText: string) {
   // agy streams the error as an ordinary chunk, then ends the turn cleanly.
   const client = {
     prompt: vi.fn(async () => {
+      // agy writes the cause to its log DURING the turn, then streams the banner.
+      onPrompt?.();
       streaming.append({ chunkId: 'msg-1', kind: 'text', delta: replyText });
       return { stopReason: 'end_turn' };
     }),
@@ -100,19 +134,25 @@ describe('Antigravity — provider errors streamed as a completed reply', () => 
     fetchSpy.mock.calls.some((c) => /\/credential-invalid$/.test(String(c[0])));
 
   beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'codeam-agy-'));
+    setCurrentAgentEnv({ HOME: home });
     fetchSpy = vi.fn(async () => ({ ok: true, status: 200 }) as Response);
     vi.stubGlobal('fetch', fetchSpy);
   });
   afterEach(() => {
+    resetCurrentAgentEnvForTests();
+    fs.rmSync(home, { recursive: true, force: true });
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it.each([
-    ['invalid API key', AGY_INVALID_KEY],
-    ['expired OAuth token', AGY_EXPIRED_OAUTH],
-  ])('%s → re-auth bubble + credential flagged invalid', async (_label, text) => {
-    const { run, sendResult, terminalTextFrames } = makeHarness('antigravity', text);
+  it('invalid API key (cause only in agy\'s log) → re-auth bubble + credential flagged invalid', async () => {
+    const { run, sendResult, terminalTextFrames } = makeHarness('antigravity', AGY_BANNER, () =>
+      writeAgyLog([
+        glog('I', new Date(), 'server.go:88] session/prompt'),
+        glog('E', new Date(), INVALID_KEY_ENTRY),
+      ]),
+    );
     await run();
     await new Promise((r) => setImmediate(r));
     const finals = terminalTextFrames();
@@ -122,8 +162,10 @@ describe('Antigravity — provider errors streamed as a completed reply', () => 
     expect(sendResult).toHaveBeenCalledWith('cmd-1', 'failed', expect.any(Object));
   });
 
-  it('a non-auth "execution terminated" → honest generic failure, credential untouched', async () => {
-    const { run, sendResult, terminalTextFrames } = makeHarness('antigravity', AGY_GENERIC_ERROR);
+  it('a non-auth agy error → honest generic failure, credential untouched', async () => {
+    const { run, sendResult, terminalTextFrames } = makeHarness('antigravity', AGY_BANNER, () =>
+      writeAgyLog([glog('E', new Date(), NON_AUTH_ENTRY)]),
+    );
     await run();
     await new Promise((r) => setImmediate(r));
     const finals = terminalTextFrames();
@@ -133,30 +175,47 @@ describe('Antigravity — provider errors streamed as a completed reply', () => 
     expect(sendResult).toHaveBeenCalledWith('cmd-1', 'failed', expect.any(Object));
   });
 
+  it('an auth error from an EARLIER turn does not reclassify a new generic failure', async () => {
+    // Logged 10 minutes before this turn started (since fixed by a re-link).
+    writeAgyLog([glog('E', new Date(Date.now() - 10 * 60_000), INVALID_KEY_ENTRY)]);
+    const { run, terminalTextFrames } = makeHarness('antigravity', AGY_BANNER, () =>
+      writeAgyLog([glog('E', new Date(), NON_AUTH_ENTRY)]),
+    );
+    await run();
+    await new Promise((r) => setImmediate(r));
+    expect(terminalTextFrames()[0].content).toBe(TURN_FAILURE_MESSAGE);
+    expect(credentialInvalidPosted()).toBe(false);
+  });
+
+  it('no agy log at all → generic failure (never a silent raw banner)', async () => {
+    const { run, terminalTextFrames } = makeHarness('antigravity', AGY_BANNER);
+    await run();
+    await new Promise((r) => setImmediate(r));
+    expect(terminalTextFrames()[0].content).toBe(TURN_FAILURE_MESSAGE);
+    expect(credentialInvalidPosted()).toBe(false);
+  });
+
   it('a normal reply that merely discusses an invalid API key is NOT misclassified', async () => {
     const reply =
       'The 400 you saw comes from the Maps client: "API key not valid" means the key in ' +
       '.env is wrong. I updated `config.ts` to read MAPS_API_KEY instead.';
-    const { run, sendResult, terminalTextFrames } = makeHarness('antigravity', reply);
+    const { run, sendResult, terminalTextFrames } = makeHarness('antigravity', reply, () =>
+      writeAgyLog([glog('E', new Date(), INVALID_KEY_ENTRY)]),
+    );
     await run();
     await new Promise((r) => setImmediate(r));
     expect(terminalTextFrames().some((f) => f.content === AUTH_FAILURE_MESSAGE)).toBe(false);
     expect(credentialInvalidPosted()).toBe(false);
     expect(sendResult).not.toHaveBeenCalledWith('cmd-1', 'failed', expect.anything());
   });
-});
 
-describe('classifyAntigravityReply', () => {
-  it('needs agy’s own termination marker', () => {
-    expect(classifyAntigravityReply('API key not valid. Please pass a valid API key.')).toBeNull();
-  });
-  it('classifies auth vs generic termination', () => {
-    expect(classifyAntigravityReply(AGY_INVALID_KEY)).toBe('auth_failed');
-    expect(classifyAntigravityReply(AGY_EXPIRED_OAUTH)).toBe('auth_failed');
-    expect(classifyAntigravityReply(AGY_GENERIC_ERROR)).toBe('agent_error');
-  });
-  it('ignores a long reply that happens to quote the marker', () => {
-    const long = `${'Here is what I changed. '.repeat(60)}\n${AGY_GENERIC_ERROR}`;
-    expect(classifyAntigravityReply(long)).toBeNull();
+  it('the same banner on another agent is left alone (scoped to antigravity)', async () => {
+    const { run, terminalTextFrames } = makeHarness('claude', AGY_BANNER, () =>
+      writeAgyLog([glog('E', new Date(), INVALID_KEY_ENTRY)]),
+    );
+    await run();
+    await new Promise((r) => setImmediate(r));
+    expect(terminalTextFrames().some((f) => f.content === AUTH_FAILURE_MESSAGE)).toBe(false);
+    expect(credentialInvalidPosted()).toBe(false);
   });
 });

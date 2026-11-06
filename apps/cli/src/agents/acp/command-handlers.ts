@@ -119,6 +119,7 @@ import {
   replyIsHouseAgentLimit,
 } from './failure-messages';
 import { agentHooks } from './agent-hooks';
+import { currentAgentEnv } from '../current-agent-env';
 import { reportCredentialInvalid } from './backend-reports';
 import type { AcpHistory, AcpRunnerOptions, StreamingState } from './runner';
 
@@ -1059,6 +1060,7 @@ async function runStartTaskTurn(
     // that CLOBBERS the already-delivered reply (2026-08-04, codeagent-dtz7).
     let turnClosed = false;
     try {
+      const turnStartedAt = Date.now();
       const reply = await promptWithContextFallback(ctx, client, turnBlocks, turnPieces);
       // Close with interactive-detection so a trailing
       // "question + numbered options" pattern in the reply gets
@@ -1071,7 +1073,11 @@ async function runStartTaskTurn(
       // Insufficient credits"). Record the structured external/house marker
       // BEFORE the classification chain below — observation only, no return.
       noteProviderBillingSignal({ text: finalText, source: 'reply', agent: opts.agent });
-      const agentReplyClass = agentHooks(opts.agent)?.classifyCompletedReply?.(finalText) ?? null;
+      const agentReplyClass =
+        agentHooks(opts.agent)?.classifyCompletedReply?.(finalText, {
+          turnStartedAt,
+          env: currentAgentEnv(),
+        }) ?? null;
       if (agentReplyClass === 'upgrade_required') {
         // Cursor's OWN plan paywall ("Upgrade your plan to continue"): the
         // user's Cursor account is on Free, which doesn't include the headless

@@ -15,7 +15,8 @@
  *     pure DATA; the CLI-behavioural predicates below (classify a reply, build
  *     spawn env) don't belong there.
  *
- * This module is a strict LEAF — it imports ONLY the `AgentId` type. In
+ * This module is a LEAF — besides the `AgentId` type it imports only agy's
+ * self-contained log classifier (`../antigravity/reply-failure`). In
  * particular it does NOT import `failure-messages.ts` (which imports THIS
  * module), so there is no runtime import cycle. The one agent-specific message
  * that stays in `failure-messages.ts` (the Cursor upgrade bubble) is applied at
@@ -23,6 +24,12 @@
  */
 
 import type { AgentId } from '@codeam/shared';
+// The one non-type import: agy's failure cause lives only in its own log file,
+// so its classifier reads it (node builtins + the logger only — no cycle).
+import {
+  classifyAntigravityReply,
+  type AntigravityReplyContext,
+} from '../antigravity/reply-failure';
 
 export interface AcpAgentHooks {
   /**
@@ -48,7 +55,10 @@ export interface AcpAgentHooks {
    * reportCredentialInvalid). `'agent_error'` ⇒ the reply IS the agent's own
    * non-auth failure notice (generic honest failure frame).
    */
-  classifyCompletedReply?: (finalText: string) => CompletedReplyClass | null;
+  classifyCompletedReply?: (
+    finalText: string,
+    ctx?: CompletedReplyContext,
+  ) => CompletedReplyClass | null;
   /**
    * Classify a STARTUP-failure haystack (`detail` + recent stderr) into an
    * agent-specific reason. Relocates failure-messages' `agent === 'gemini' &&
@@ -80,37 +90,8 @@ export function replyIsCursorUpgradeRequired(finalText: string): boolean {
 
 export type CompletedReplyClass = 'upgrade_required' | 'auth_failed' | 'agent_error';
 
-/** agy's own banner for a turn its provider call failed. */
-const AGY_TERMINATED_RE = /Agent execution terminated due to error/i;
-/**
- * Google credential failures as agy relays them: an invalid/expired API key
- * ("API key not valid", reason API_KEY_INVALID / "API key expired") or a dead
- * OAuth token (401 UNAUTHENTICATED "invalid authentication credentials", a
- * refresh that fails "invalid_grant" / "Token has been expired or revoked").
- */
-const AGY_AUTH_RE =
-  /API key not valid|API_KEY_INVALID|API key expired|invalid authentication credentials|\bUNAUTHENTICATED\b|token has been expired or revoked|\binvalid_grant\b|authentication required/i;
-/**
- * agy's notice is the banner plus the provider's message (a Google error body
- * can carry a details array), so the bound is wider than replyIsAuthFailure's
- * 200 — the required banner keeps a substantive reply from matching.
- */
-const AGY_ERROR_REPLY_MAX = 1000;
-
-/**
- * Antigravity (`agy acp`) reports a provider failure as a NORMAL agent message
- * chunk — "⚠ Agent execution terminated due to error." plus the provider's
- * detail — followed by a clean `end_turn`, never a JSON-RPC error, so no
- * throw/exit failure path sees it (codeagent-6bg9). Requires agy's banner and
- * a short reply, so a reply that merely discusses an API-key error is never
- * misclassified.
- */
-export function classifyAntigravityReply(finalText: string): 'auth_failed' | 'agent_error' | null {
-  const t = finalText.trim();
-  if (t.length === 0 || t.length > AGY_ERROR_REPLY_MAX) return null;
-  if (!AGY_TERMINATED_RE.test(t)) return null;
-  return AGY_AUTH_RE.test(t) ? 'auth_failed' : 'agent_error';
-}
+/** What a completed-reply classifier may need beyond the text (agy reads its own log). */
+export type CompletedReplyContext = AntigravityReplyContext;
 
 /** True when a startup failure is Gemini's post-2026-06-18 free-tier death. */
 function isGeminiIneligibleTier(haystack: string): boolean {
