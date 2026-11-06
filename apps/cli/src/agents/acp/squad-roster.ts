@@ -123,10 +123,31 @@ export class SquadState {
   private turns: SquadJournalEntry[];
   private readonly members = new Map<string, SquadMemberState>();
 
-  constructor(opts: { sessionId: string; homeDir?: string; auto?: SquadAutoConfig | null }) {
+  /** Backend roster fetch (`/api/plugin/agents/roster`); absent → never refreshes. */
+  private readonly fetchRoster: (() => Promise<SquadRosterData | null>) | null;
+
+  constructor(opts: {
+    sessionId: string;
+    homeDir?: string;
+    auto?: SquadAutoConfig | null;
+    fetchRoster?: () => Promise<SquadRosterData | null>;
+  }) {
     this.journalPath = journalPathFor(opts.homeDir ?? os.homedir(), opts.sessionId);
     this.turns = loadJournal(this.journalPath);
+    this.fetchRoster = opts.fetchRoster ?? null;
     if (opts.auto) this.setAuto(opts.auto);
+  }
+
+  /**
+   * Re-fetch the roster from the backend (on demand — never on a timer). A
+   * failed/offline fetch keeps the last known roster. Resolves to the roster
+   * now in effect.
+   */
+  async refreshRoster(): Promise<SquadRosterData | null> {
+    if (!this.fetchRoster) return this.roster;
+    const fresh = await this.fetchRoster();
+    if (fresh) this.roster = fresh;
+    return this.roster;
   }
 
   get auto(): Readonly<SquadAutoConfig> {

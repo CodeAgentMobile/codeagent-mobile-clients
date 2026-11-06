@@ -69,6 +69,7 @@ import {
   type IntegrationsManifest,
   type SquadConfigurePayload,
   type SquadConfigureResult,
+  type SquadRosterData,
   type SquadStatsResult,
   type StartTaskFailedResult,
   type StartTaskPayload,
@@ -493,9 +494,18 @@ async function routeSquadTask(
   // The roster is the authority on membership when we have one. Without it
   // (old backend / offline) `performAgentSwitch`'s own validation still
   // rejects unknown / non-switchable ids honestly.
-  const roster = squad?.roster;
-  if (roster && !roster.agents.some((a) => a.agentId === target)) {
-    return { ok: false, error: `Unknown agent '${target}' — not in your squad.` };
+  //
+  // The cached roster is fetched at session start, so an agent the user linked
+  // AFTER that is missing from it: re-fetch ONCE on a miss before refusing
+  // (codeagent-p1ch — Antigravity linked mid-session was refused "not in your
+  // squad" and Claude answered the @-mention instead).
+  const inRoster = (r: SquadRosterData | null | undefined): boolean =>
+    Boolean(r && r.agents.some((a) => a.agentId === target));
+  if (squad?.roster && !inRoster(squad.roster)) {
+    const fresh = await squad.refreshRoster();
+    if (!inRoster(fresh)) {
+      return { ok: false, error: `Unknown agent '${target}' — not in your squad.` };
+    }
   }
   const member = squad?.member(target);
   const fastPathArmed = Boolean(member && (member.provisioned || member.binaryVerified));
