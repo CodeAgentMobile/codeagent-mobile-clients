@@ -43,9 +43,12 @@ export interface AcpAgentHooks {
    * Classify an agent's COMPLETED-turn reply into an agent-specific terminal
    * outcome. Relocates command-handlers' `agent === 'cursor' &&
    * replyIsCursorUpgradeRequired(...)` branch. `'upgrade_required'` ⇒ Cursor's
-   * own plan paywall arrived as the reply.
+   * own plan paywall arrived as the reply. `'auth_failed'` ⇒ the reply IS the
+   * agent's own invalid/expired-credential error (re-auth bubble +
+   * reportCredentialInvalid). `'agent_error'` ⇒ the reply IS the agent's own
+   * non-auth failure notice (generic honest failure frame).
    */
-  classifyCompletedReply?: (finalText: string) => 'upgrade_required' | null;
+  classifyCompletedReply?: (finalText: string) => CompletedReplyClass | null;
   /**
    * Classify a STARTUP-failure haystack (`detail` + recent stderr) into an
    * agent-specific reason. Relocates failure-messages' `agent === 'gemini' &&
@@ -73,6 +76,40 @@ export function replyIsCursorUpgradeRequired(finalText: string): boolean {
     t.includes('upgrade your plan to continue') ||
     (t.includes('upgrade your plan') && t.includes('continue'))
   );
+}
+
+export type CompletedReplyClass = 'upgrade_required' | 'auth_failed' | 'agent_error';
+
+/** agy's own banner for a turn its provider call failed. */
+const AGY_TERMINATED_RE = /Agent execution terminated due to error/i;
+/**
+ * Google credential failures as agy relays them: an invalid/expired API key
+ * ("API key not valid", reason API_KEY_INVALID / "API key expired") or a dead
+ * OAuth token (401 UNAUTHENTICATED "invalid authentication credentials", a
+ * refresh that fails "invalid_grant" / "Token has been expired or revoked").
+ */
+const AGY_AUTH_RE =
+  /API key not valid|API_KEY_INVALID|API key expired|invalid authentication credentials|\bUNAUTHENTICATED\b|token has been expired or revoked|\binvalid_grant\b|authentication required/i;
+/**
+ * agy's notice is the banner plus the provider's message (a Google error body
+ * can carry a details array), so the bound is wider than replyIsAuthFailure's
+ * 200 — the required banner keeps a substantive reply from matching.
+ */
+const AGY_ERROR_REPLY_MAX = 1000;
+
+/**
+ * Antigravity (`agy acp`) reports a provider failure as a NORMAL agent message
+ * chunk — "⚠ Agent execution terminated due to error." plus the provider's
+ * detail — followed by a clean `end_turn`, never a JSON-RPC error, so no
+ * throw/exit failure path sees it (codeagent-6bg9). Requires agy's banner and
+ * a short reply, so a reply that merely discusses an API-key error is never
+ * misclassified.
+ */
+export function classifyAntigravityReply(finalText: string): 'auth_failed' | 'agent_error' | null {
+  const t = finalText.trim();
+  if (t.length === 0 || t.length > AGY_ERROR_REPLY_MAX) return null;
+  if (!AGY_TERMINATED_RE.test(t)) return null;
+  return AGY_AUTH_RE.test(t) ? 'auth_failed' : 'agent_error';
 }
 
 /** True when a startup failure is Gemini's post-2026-06-18 free-tier death. */
@@ -119,6 +156,9 @@ export const ACP_AGENT_HOOKS: Partial<Record<AgentId, AcpAgentHooks>> = {
     statusPage: { vendor: 'Cursor', url: 'https://status.cursor.com' },
     classifyCompletedReply: (finalText) =>
       replyIsCursorUpgradeRequired(finalText) ? 'upgrade_required' : null,
+  },
+  antigravity: {
+    classifyCompletedReply: classifyAntigravityReply,
   },
 };
 
