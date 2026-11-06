@@ -91,6 +91,7 @@ export type LinkedAgentId =
   | 'kimi'
   | 'openrouter'
   | 'opencode'
+  | 'antigravity'
   | typeof HOUSE_AGENT_ID
   | ManagedProviderId;
 
@@ -104,6 +105,7 @@ export const LINKED_AGENT_IDS: readonly LinkedAgentId[] = [
   'kimi',
   'openrouter',
   'opencode',
+  'antigravity',
   HOUSE_AGENT_ID,
   ...MANAGED_PROVIDER_IDS,
 ];
@@ -144,6 +146,9 @@ export const PUBLIC_TO_INTERNAL: Readonly<
   // opencode is a real, distinct agent (its own binary + ACP server) — it does
   // NOT map onto another runtime. Public id === internal id.
   opencode: 'opencode',
+  // Antigravity CLI (`agy`) is its own binary + native ACP server — public id
+  // === internal id, like opencode.
+  antigravity: 'antigravity',
   // OpenRouter runs Claude Code under the hood, pointed at OpenRouter's hosted
   // "Anthropic Skin" (https://openrouter.ai/api — native Anthropic Messages
   // protocol) with the user's vaulted `sk-or-…` key as ANTHROPIC_AUTH_TOKEN,
@@ -177,6 +182,7 @@ export const INTERNAL_TO_PUBLIC: Readonly<Partial<Record<AgentId, LinkedAgentId>
   gemini: 'gemini',
   kimi: 'kimi',
   opencode: 'opencode',
+  antigravity: 'antigravity',
 };
 
 function isPublicToInternalKey(v: string): v is LinkedAgentId | 'claude' | 'copilot' {

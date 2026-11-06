@@ -7,7 +7,8 @@ export type AgentId =
   | 'aider'
   | 'gemini'
   | 'kimi'
-  | 'opencode';
+  | 'opencode'
+  | 'antigravity';
 
 export type AgentAuthKind = 'oauth_token' | 'api_key' | 'setup_token';
 

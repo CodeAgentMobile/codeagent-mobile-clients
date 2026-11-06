@@ -126,6 +126,21 @@ if ! command -v opencode >/dev/null 2>&1; then
 fi`;
 
 /**
+ * Antigravity CLI (`agy`). Official no-sudo installer (glibc + musl builds);
+ * drops the binary in ~/.local/bin, which is not on every default PATH — so
+ * extend PATH for the session AND persist it to ~/.bashrc, like cursor. Baked
+ * in the box image under /opt/agents/.local/bin → `command -v` short-circuits.
+ */
+const ANTIGRAVITY = `
+if ! command -v agy >/dev/null 2>&1; then
+  curl -fsSL https://antigravity.google/cli/install.sh | bash \\
+    || { echo '[codeam:step] antigravity_install_retry' >&2; sleep 2; curl -fsSL https://antigravity.google/cli/install.sh | bash; } \\
+    || { echo '[ERROR] Antigravity CLI install failed (antigravity.google/cli/install.sh)' >&2; exit 1; }
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+  export PATH="$HOME/.local/bin:$PATH"
+fi`;
+
+/**
  * Baked in the image → `command -v` short-circuits. The guard only installs on
  * a bare box that somehow lacks it. Retry once (unguarded network pipe).
  */
@@ -160,6 +175,7 @@ export const INSTALL_SNIPPETS: Readonly<Partial<Record<AgentId, string>>> = Obje
   kimi: KIMI,
   cursor: CURSOR,
   opencode: OPENCODE,
+  antigravity: ANTIGRAVITY,
   aider: AIDER,
   coderabbit: CODERABBIT,
 });

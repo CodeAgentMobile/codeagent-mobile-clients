@@ -49,6 +49,7 @@ describe('AGENT_REGISTRY', () => {
     const enabled = getEnabledAgents();
     expect(enabled.map(a => a.id).sort()).toEqual([
       'aider',
+      'antigravity',
       'claude',
       'coderabbit',
       'codex',
@@ -89,12 +90,9 @@ describe('AGENT_REGISTRY', () => {
  * after 2026-09-01 and the newest that same day — three months of sending
  * people through a bricked door.
  *
- * ⚠️ Antigravity CLI is NOT a drop-in replacement for us: it has no official
- * ACP mode (google-antigravity/antigravity-cli#31, still open, 192 comments,
- * zero `acp` hits in the repo as of 2026-09-15) and every third-party adapter
- * warns that driving `agy` that way matches what Google's FAQ calls a ToS
- * violation, risking the USER's account. Our whole Gemini path is ACP. Revisit
- * only when that issue ships.
+ * Consumer-Google users go to Antigravity CLI instead — its own agent since
+ * official ACP (`agy acp`) shipped in agy 1.5.0 (2026-11-04); see the
+ * `antigravity` suite below.
  */
 describe('gemini: the retired OAuth tier is not offered', () => {
   it('accepts an API key and nothing else', () => {
@@ -111,5 +109,25 @@ describe('gemini: the retired OAuth tier is not offered', () => {
 
   it('stays enabled — the CLI itself is alive on paid keys', () => {
     expect(AGENT_REGISTRY.gemini.enabled).toBe(true);
+  });
+});
+
+describe('antigravity: Antigravity CLI over native ACP', () => {
+  const meta = AGENT_REGISTRY.antigravity;
+
+  it('is registered under the owner-decided identity', () => {
+    expect(meta.id).toBe('antigravity');
+    expect(meta.displayName).toBe('Antigravity CLI');
+    expect(meta.binaryName).toBe('agy');
+    expect(meta.enabled).toBe(true);
+  });
+
+  it('prefers the backend-minted OAuth blob and accepts a Gemini API key', () => {
+    expect(meta.supportedAuthKinds).toEqual(['oauth_token', 'api_key']);
+    expect(meta.preferredAuthKind).toBe('oauth_token');
+  });
+
+  it('runs over ACP (agy acp)', () => {
+    expect(meta.acp).toBe(true);
   });
 });
