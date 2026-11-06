@@ -227,6 +227,16 @@ const HEARTBEAT_INTERVAL_MS = 20_000;
  */
 export const RESUME_RETRY_BACKOFF_MS = [15_000, 30_000, 60_000, 120_000] as const;
 
+/**
+ * Agents whose login FILE is read once at start and then held in memory, so rewriting it on a
+ * re-link changes nothing for a running session: those children are restarted (resume path, same
+ * conversation) like an env-delivered key. Antigravity CLI: verified 2026-11-06 on agy 1.5.2 — after
+ * a rewrite of `~/.gemini/antigravity-cli/antigravity-oauth-token`, the next prompt never read the
+ * file again (its atime stayed behind the rewrite under relatime). Claude Code and Codex re-read
+ * theirs on a 401 and stay in place.
+ */
+export const AUTH_FILE_CACHED_IN_MEMORY: ReadonlySet<string> = new Set(['antigravity']);
+
 /** A child must have been up this long before its death counts as a crash to respawn
  *  (shorter = it never came up → report `failed` instead of looping). */
 export const CRASH_RESPAWN_MIN_UPTIME_MS = 60_000;
@@ -2984,6 +2994,17 @@ export class HostAgentSupervisor {
       const auth = await this.resolveAgentAuth(this.identity, payload.sealedAgentAuth);
       const credEnv = provisionAgentCredentials(payload.agentId, auth, undefined);
       const affected = [...this.children.values()].filter((c) => c.agent === payload.agentId);
+      if (Object.keys(credEnv).length === 0 && AUTH_FILE_CACHED_IN_MEMORY.has(payload.agentId)) {
+        for (const child of affected) {
+          this.credentialEnvByDeploy.delete(child.deployId);
+          this.restartWithFreshCredentials(child);
+        }
+        log.info(
+          'host-agent',
+          `refreshed login file for agent=${payload.agentId}; restarted ${affected.length} child(ren)`,
+        );
+        return;
+      }
       if (Object.keys(credEnv).length === 0) {
         for (const c of affected) this.credentialEnvByDeploy.delete(c.deployId);
         log.info(

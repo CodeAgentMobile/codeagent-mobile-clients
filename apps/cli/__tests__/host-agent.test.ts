@@ -4331,13 +4331,13 @@ describe('HostAgentSupervisor — re-link of an env-delivered credential', () =>
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  function boot(auth: AgentAuth) {
+  function boot(auth: AgentAuth, agent = 'claude_code') {
     const a = path.join(tmpRoot, 'dep-a');
     const b = path.join(tmpRoot, 'dep-b');
     fs.mkdirSync(a, { recursive: true });
     fs.mkdirSync(b, { recursive: true });
     let list: Rec[] = [
-      { deployId: 'dep-a', cwd: a, agent: 'claude_code', startedAt: 1 },
+      { deployId: 'dep-a', cwd: a, agent, startedAt: 1 },
       { deployId: 'dep-b', cwd: b, agent: 'codex', startedAt: 2 },
     ];
     const spawned: Array<{ env: Record<string, string>; proc: ReturnType<typeof fakeProc> }> = [];
@@ -4360,7 +4360,7 @@ describe('HostAgentSupervisor — re-link of an env-delivered credential', () =>
         id: 'cmd-refresh',
         sessionId: 'sh-plugin-1',
         type: 'self_hosted_refresh_credentials',
-        payload: { agentId: 'claude_code', sealedAgentAuth: 'sealed-fresh' },
+        payload: { agentId: agent, sealedAgentAuth: 'sealed-fresh' },
       });
     return { sup, spawned, refresh };
   }
@@ -4413,6 +4413,30 @@ describe('HostAgentSupervisor — re-link of an env-delivered credential', () =>
       expect(fs.existsSync(path.join(tmpRoot, '.claude', '.credentials.json'))).toBe(true);
       expect(spawned).toHaveLength(2);
       for (const s of spawned) expect(s.proc.kill).not.toHaveBeenCalled();
+    } finally {
+      sup.stop();
+    }
+  });
+
+  // agy holds its token in memory (verified 2026-11-06: a rewritten token file is never read
+  // again by the running process), so a re-link must restart its sessions or they keep the
+  // expired login.
+  it('oauth_token for Antigravity: rewrites its token file AND restarts only its children', async () => {
+    const blob =
+      '{"token":{"access_token":"ya29.fresh","token_type":"Bearer","refresh_token":"1//fresh","expiry":"2099-01-01T00:00:00Z"},"auth_method":"consumer"}';
+    const { sup, spawned, refresh } = boot({ kind: 'oauth_token', value: blob }, 'antigravity');
+    try {
+      const oldA = bySession(spawned, 'sess-a')[0].proc;
+      const oldB = bySession(spawned, 'sess-b')[0].proc;
+
+      await refresh();
+
+      const file = path.join(tmpRoot, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).token.access_token).toBe('ya29.fresh');
+      expect(oldA.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(bySession(spawned, 'sess-a')).toHaveLength(2);
+      expect(oldB.kill).not.toHaveBeenCalled();
+      expect(bySession(spawned, 'sess-b')).toHaveLength(1);
     } finally {
       sup.stop();
     }
