@@ -10,6 +10,7 @@ import { AiderRuntimeStrategy } from './aider/runtime';
 import { GeminiRuntimeStrategy } from './gemini/runtime';
 import { KimiRuntimeStrategy } from './kimi/runtime';
 import { OpencodeRuntimeStrategy } from './opencode/runtime';
+import { AntigravityRuntimeStrategy } from './antigravity/runtime';
 import type { AgentStrategy, RuntimeStrategy, DeployStrategy } from './strategy';
 
 /**
@@ -37,6 +38,7 @@ const runtimeBuilders: Partial<Record<AgentId, (os: OsStrategy) => AgentStrategy
   gemini: (os) => new GeminiRuntimeStrategy(os),
   kimi: (os) => new KimiRuntimeStrategy(os),
   opencode: (os) => new OpencodeRuntimeStrategy(os),
+  antigravity: (os) => new AntigravityRuntimeStrategy(os),
 };
 
 const deployBuilders: Partial<Record<AgentId, () => DeployStrategy>> = {

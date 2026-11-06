@@ -45,6 +45,10 @@ export const AGENT_INSTALL_CASES: Record<string, AgentCase> = {
     note: 'curl installer → ~/.local/bin; adapter spec is cached with the BARE name pre-install',
   },
   opencode: { kind: 'real', note: 'curl installer → ~/.opencode/bin (off PATH by construction)' },
+  antigravity: {
+    kind: 'real',
+    note: 'no-sudo curl installer → ~/.local/bin/agy (glibc/musl build picked by the script)',
+  },
   aider: {
     kind: 'real',
     note: 'pip falls back to a --user install → ~/.local/bin; probed via the runtime prepareLaunch',

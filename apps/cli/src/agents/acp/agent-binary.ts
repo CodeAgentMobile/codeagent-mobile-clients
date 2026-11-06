@@ -312,6 +312,8 @@ export interface AugmentUserLocalBinPathsDeps {
  *                (mirrors `kimi/installer.ts` `kimiBinDir`).
  *   - opencode → `$OPENCODE_HOME/bin`, default `~/.opencode/bin`
  *                (mirrors `opencode/installer.ts` `opencodeBinDir`).
+ *   - antigravity → official install.sh → `~/.local/bin/agy` (box image:
+ *                `/usr/local/bin/agy`, already on PATH).
  *   - aider    → pip `--user` → `~/.local/bin`.
  *   - coderabbit → vendor script → `~/.local/bin`.
  */
