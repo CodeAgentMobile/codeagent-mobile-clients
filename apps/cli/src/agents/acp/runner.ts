@@ -1988,19 +1988,19 @@ export async function runAcpSession(opts: AcpRunnerOptions): Promise<void> {
   const squad = new SquadState({
     sessionId: opts.sessionId,
     auto: getSquadAuto(opts.pluginId),
+    fetchRoster: () =>
+      fetchSquadRoster({
+        sessionId: opts.sessionId,
+        pluginId: opts.pluginId,
+        pluginAuthToken: opts.pluginAuthToken,
+      }),
   });
   // The roster is a BACKEND fact (which agents the user linked + whether the
   // plan allows handoffs). Fire-and-forget at session start so a slow/offline
   // roster fetch never delays the first turn; every squad feature no-ops
   // while `squad.roster` is null (old backend / offline → silently off).
   const refreshSquadRoster = (): void => {
-    void fetchSquadRoster({
-      sessionId: opts.sessionId,
-      pluginId: opts.pluginId,
-      pluginAuthToken: opts.pluginAuthToken,
-    }).then((roster) => {
-      if (roster) squad.roster = roster;
-    });
+    void squad.refreshRoster();
   };
   refreshSquadRoster();
   // At most ONE un-resolved agent-proposed handoff at a time (startTaskH emits

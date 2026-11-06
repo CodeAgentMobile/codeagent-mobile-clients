@@ -304,7 +304,11 @@ export function completedReplyFailureBubble(opts: {
   if (replyIsByoProviderBilling(opts.finalText, env)) {
     return byoProviderBillingMessage(byoProviderName({ env, agent: opts.agent }));
   }
-  if (replyIsAuthFailure(opts.finalText)) return AUTH_FAILURE_MESSAGE;
+  const agentReplyClass = agentHooks(opts.agent)?.classifyCompletedReply?.(opts.finalText, { env });
+  if (agentReplyClass === 'auth_failed' || replyIsAuthFailure(opts.finalText)) {
+    return AUTH_FAILURE_MESSAGE;
+  }
+  if (agentReplyClass === 'agent_error') return TURN_FAILURE_MESSAGE;
   return null;
 }
 

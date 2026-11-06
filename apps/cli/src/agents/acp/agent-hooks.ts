@@ -15,7 +15,8 @@
  *     pure DATA; the CLI-behavioural predicates below (classify a reply, build
  *     spawn env) don't belong there.
  *
- * This module is a strict LEAF — it imports ONLY the `AgentId` type. In
+ * This module is a LEAF — besides the `AgentId` type it imports only agy's
+ * self-contained log classifier (`../antigravity/reply-failure`). In
  * particular it does NOT import `failure-messages.ts` (which imports THIS
  * module), so there is no runtime import cycle. The one agent-specific message
  * that stays in `failure-messages.ts` (the Cursor upgrade bubble) is applied at
@@ -23,6 +24,12 @@
  */
 
 import type { AgentId } from '@codeam/shared';
+// The one non-type import: agy's failure cause lives only in its own log file,
+// so its classifier reads it (node builtins + the logger only — no cycle).
+import {
+  classifyAntigravityReply,
+  type AntigravityReplyContext,
+} from '../antigravity/reply-failure';
 
 export interface AcpAgentHooks {
   /**
@@ -43,9 +50,15 @@ export interface AcpAgentHooks {
    * Classify an agent's COMPLETED-turn reply into an agent-specific terminal
    * outcome. Relocates command-handlers' `agent === 'cursor' &&
    * replyIsCursorUpgradeRequired(...)` branch. `'upgrade_required'` ⇒ Cursor's
-   * own plan paywall arrived as the reply.
+   * own plan paywall arrived as the reply. `'auth_failed'` ⇒ the reply IS the
+   * agent's own invalid/expired-credential error (re-auth bubble +
+   * reportCredentialInvalid). `'agent_error'` ⇒ the reply IS the agent's own
+   * non-auth failure notice (generic honest failure frame).
    */
-  classifyCompletedReply?: (finalText: string) => 'upgrade_required' | null;
+  classifyCompletedReply?: (
+    finalText: string,
+    ctx?: CompletedReplyContext,
+  ) => CompletedReplyClass | null;
   /**
    * Classify a STARTUP-failure haystack (`detail` + recent stderr) into an
    * agent-specific reason. Relocates failure-messages' `agent === 'gemini' &&
@@ -74,6 +87,11 @@ export function replyIsCursorUpgradeRequired(finalText: string): boolean {
     (t.includes('upgrade your plan') && t.includes('continue'))
   );
 }
+
+export type CompletedReplyClass = 'upgrade_required' | 'auth_failed' | 'agent_error';
+
+/** What a completed-reply classifier may need beyond the text (agy reads its own log). */
+export type CompletedReplyContext = AntigravityReplyContext;
 
 /** True when a startup failure is Gemini's post-2026-06-18 free-tier death. */
 function isGeminiIneligibleTier(haystack: string): boolean {
@@ -119,6 +137,9 @@ export const ACP_AGENT_HOOKS: Partial<Record<AgentId, AcpAgentHooks>> = {
     statusPage: { vendor: 'Cursor', url: 'https://status.cursor.com' },
     classifyCompletedReply: (finalText) =>
       replyIsCursorUpgradeRequired(finalText) ? 'upgrade_required' : null,
+  },
+  antigravity: {
+    classifyCompletedReply: classifyAntigravityReply,
   },
 };
 

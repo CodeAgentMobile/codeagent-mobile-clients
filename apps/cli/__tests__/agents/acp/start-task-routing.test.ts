@@ -348,6 +348,41 @@ describe('start_task — agentId routing', () => {
     });
   });
 
+  // codeagent-p1ch (dev Box, 2026-11-06): the user linked Antigravity AFTER the
+  // session started, so the roster fetched at session start didn't list it;
+  // the @-mention was refused "Unknown agent 'antigravity' — not in your squad."
+  // and Claude answered instead. A miss re-fetches the roster ONCE, on demand.
+  it('re-fetches a stale roster once when the target is missing, then routes', async () => {
+    const fetchRoster = vi.fn(async (): Promise<SquadRosterData> => ({
+      ...ROSTER,
+      agents: [...ROSTER.agents, { agentId: 'antigravity', displayName: 'Antigravity' }],
+    }));
+    const squad = new SquadState({ sessionId: 's1', homeDir, fetchRoster });
+    const { session, calls, routeToAgent, relay } = makeCtx({ squad });
+    await dispatchAcpCommand(
+      assembleAcpCommandContext(session, startTask({ prompt: 'go', agentId: 'antigravity' })),
+    );
+    expect(fetchRoster).toHaveBeenCalledOnce();
+    expect(routeToAgent).toHaveBeenCalledWith('antigravity');
+    expect(calls).toContain('prompt@antigravity');
+    expect(relay.sendResult).not.toHaveBeenCalledWith('cmd-1', 'failed', expect.anything());
+  });
+
+  it('still refuses when the re-fetched roster also lacks the target', async () => {
+    const fetchRoster = vi.fn(async (): Promise<SquadRosterData> => ROSTER);
+    const squad = new SquadState({ sessionId: 's1', homeDir, fetchRoster });
+    const { session, routeToAgent, client, relay } = makeCtx({ squad });
+    await dispatchAcpCommand(
+      assembleAcpCommandContext(session, startTask({ prompt: 'go', agentId: 'ghost' })),
+    );
+    expect(fetchRoster).toHaveBeenCalledOnce();
+    expect(routeToAgent).not.toHaveBeenCalled();
+    expect(client.prompt).not.toHaveBeenCalled();
+    expect(relay.sendResult).toHaveBeenCalledWith('cmd-1', 'failed', {
+      error: "Unknown agent 'ghost' — not in your squad.",
+    });
+  });
+
   it('retries ONCE on the full path when an armed fast path fails, then fails the task', async () => {
     const squad = new SquadState({ sessionId: 's1', homeDir });
     // Member already brought up once this process → the fast path is armed.

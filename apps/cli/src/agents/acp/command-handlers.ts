@@ -69,6 +69,7 @@ import {
   type IntegrationsManifest,
   type SquadConfigurePayload,
   type SquadConfigureResult,
+  type SquadRosterData,
   type SquadStatsResult,
   type StartTaskFailedResult,
   type StartTaskPayload,
@@ -106,6 +107,7 @@ import {
   AUTH_FAILURE_MESSAGE,
   CURSOR_UPGRADE_MESSAGE,
   ONE_M_CREDITS_MESSAGE,
+  TURN_FAILURE_MESSAGE,
   describeError,
   emptyReplyMessage,
   failureBubble,
@@ -117,6 +119,7 @@ import {
   replyIsHouseAgentLimit,
 } from './failure-messages';
 import { agentHooks } from './agent-hooks';
+import { currentAgentEnv } from '../current-agent-env';
 import { reportCredentialInvalid } from './backend-reports';
 import type { AcpHistory, AcpRunnerOptions, StreamingState } from './runner';
 
@@ -493,9 +496,18 @@ async function routeSquadTask(
   // The roster is the authority on membership when we have one. Without it
   // (old backend / offline) `performAgentSwitch`'s own validation still
   // rejects unknown / non-switchable ids honestly.
-  const roster = squad?.roster;
-  if (roster && !roster.agents.some((a) => a.agentId === target)) {
-    return { ok: false, error: `Unknown agent '${target}' — not in your squad.` };
+  //
+  // The cached roster is fetched at session start, so an agent the user linked
+  // AFTER that is missing from it: re-fetch ONCE on a miss before refusing
+  // (codeagent-p1ch — Antigravity linked mid-session was refused "not in your
+  // squad" and Claude answered the @-mention instead).
+  const inRoster = (r: SquadRosterData | null | undefined): boolean =>
+    Boolean(r && r.agents.some((a) => a.agentId === target));
+  if (squad?.roster && !inRoster(squad.roster)) {
+    const fresh = await squad.refreshRoster();
+    if (!inRoster(fresh)) {
+      return { ok: false, error: `Unknown agent '${target}' — not in your squad.` };
+    }
   }
   const member = squad?.member(target);
   const fastPathArmed = Boolean(member && (member.provisioned || member.binaryVerified));
@@ -1048,6 +1060,7 @@ async function runStartTaskTurn(
     // that CLOBBERS the already-delivered reply (2026-08-04, codeagent-dtz7).
     let turnClosed = false;
     try {
+      const turnStartedAt = Date.now();
       const reply = await promptWithContextFallback(ctx, client, turnBlocks, turnPieces);
       // Close with interactive-detection so a trailing
       // "question + numbered options" pattern in the reply gets
@@ -1060,7 +1073,12 @@ async function runStartTaskTurn(
       // Insufficient credits"). Record the structured external/house marker
       // BEFORE the classification chain below — observation only, no return.
       noteProviderBillingSignal({ text: finalText, source: 'reply', agent: opts.agent });
-      if (agentHooks(opts.agent)?.classifyCompletedReply?.(finalText) === 'upgrade_required') {
+      const agentReplyClass =
+        agentHooks(opts.agent)?.classifyCompletedReply?.(finalText, {
+          turnStartedAt,
+          env: currentAgentEnv(),
+        }) ?? null;
+      if (agentReplyClass === 'upgrade_required') {
         // Cursor's OWN plan paywall ("Upgrade your plan to continue"): the
         // user's Cursor account is on Free, which doesn't include the headless
         // Agent. NOT a credential problem — swap the bare text for an
@@ -1117,7 +1135,7 @@ async function runStartTaskTurn(
           error: 'provider account has no credits (402)',
         });
         return;
-      } else if (replyIsAuthFailure(finalText)) {
+      } else if (agentReplyClass === 'auth_failed' || replyIsAuthFailure(finalText)) {
         // The agent COMPLETED the turn but its reply IS an auth-failure
         // notice ("Not logged in · Please run /login") — a missing/expired
         // credential the agent surfaced as plain text instead of throwing.
@@ -1162,6 +1180,22 @@ async function runStartTaskTurn(
         await relay.sendResult(cmd.id, 'failed', {
           error: 'agent reply reported 1M-context usage-credits gate',
         });
+        return;
+      } else if (agentReplyClass === 'agent_error') {
+        // The reply IS the agent's own non-auth failure notice (agy's "⚠ Agent
+        // execution terminated due to error." + end_turn, codeagent-6bg9).
+        // Replace it with the honest generic failure frame; the credential is
+        // fine, so no reportCredentialInvalid.
+        await streaming.closeWithBubble(TURN_FAILURE_MESSAGE);
+        turnClosed = true;
+        history.appendAgentReply(TURN_FAILURE_MESSAGE);
+        void history.flush();
+        turnFiles.flushTurn().catch((err) => {
+          log.warn('acpRunner', `turnFiles.flushTurn failed: ${describeError(err)}`);
+        });
+        log.info('acpRunner', `start_task ← agent-error-in-reply id=${cmd.id.slice(0, 8)}`);
+        reportTurn(ctx, 'failed', 'TURN_ERROR');
+        await relay.sendResult(cmd.id, 'failed', { error: 'agent reply reported an error' });
         return;
       } else if (
         reply.stopReason === 'end_turn' &&
