@@ -3,7 +3,7 @@
 The static plugin package that lists CodeAgent Mobile in the ChatGPT / Codex
 plugin directory. It carries no code — it's a manifest, an MCP server pointer,
 and a set of skills that teach the model how to use the already-live
-`https://mcp.codeagent-mobile.com/mcp` gateway (13 tools: sessions, agents,
+`https://mcp.codeagent-mobile.com/mcp` gateway (20 tools: Remix — find, quote, build and track apps — plus sessions, agents,
 wallet, diff, PR, mobile hand-off).
 
 ## Layout

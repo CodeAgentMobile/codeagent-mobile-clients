@@ -28,6 +28,16 @@ Optional extra positive case (use it if the portal accepts more than five, or sw
 |---|---|---|---|---|
 | 6 | Product question answered from CodeAgent's docs | What can the CodeAgent Mobile app do that I can't do from here? | `search_codeagent_help` | A short list of app-only capabilities (e.g. live Preview, voice, deploying a Box or codespace, Take Control) with links to the CodeAgent wiki. |
 
+
+Remix cases (1.1.0) — the review account has never built a Remix app, so its first build is free:
+
+| # | description | prompt | tools_triggered | expected_behavior |
+|---|---|---|---|---|
+| 7 | Find live apps | Is there an app for splitting bills with friends? | `find_apps` | Cards of live apps with poster, author and Open in the feed / Remix it buttons. |
+| 8 | Price an app before building | Build me a habit tracker with daily check-ins and a weekly streak chart | `quote_app`, `get_quote` | A quote card shows what will be built and "Free — your first app" (or the price in remixes); nothing is built yet and the model asks to confirm. |
+| 9 | Build after confirming | Yes, build it | `create_app`, `get_build_status` | The build starts only after the yes; the card shows its progress steps and ends with the app's link. |
+| 10 | The user's apps | What apps have I made? | `get_my_apps` | The apps and builds in progress with their links. |
+
 ## Negative test cases
 
 | # | description | prompt |
