@@ -4,6 +4,20 @@ All notable changes to the CodeAgent-Mobile JetBrains plugin are documented here
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.45] — 2026-11-06
+
+### Added
+
+- Antigravity CLI (agy) as a supported agent (#1020)
+
+### Chore
+
+- **plugin:** OpenAI plugin 1.1.0 — Remix first (#1019)
+
+### Documentation
+
+- Attention to detail and good taste is non-negotiable
+
 ## [2.76.44] — 2026-11-01
 
 ### Fixed
