@@ -21,9 +21,17 @@ const CREDENTIAL_WORD_RE = /(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API_?KEY|AUTH)
 
 describe('INSTALL_SNIPPETS', () => {
   it('has at least the installable agents the product ships', () => {
-    for (const id of ['codex', 'gemini', 'kimi', 'cursor', 'opencode'] as AgentId[]) {
+    for (const id of ['codex', 'gemini', 'kimi', 'cursor', 'opencode', 'antigravity'] as AgentId[]) {
       expect(INSTALL_SNIPPETS[id], `missing install snippet for ${id}`).toBeTruthy();
     }
+  });
+
+  it('installs Antigravity CLI with the official no-sudo installer into ~/.local/bin', () => {
+    const snippet = INSTALL_SNIPPETS.antigravity ?? '';
+    expect(snippet).toContain('command -v agy');
+    expect(snippet).toContain('https://antigravity.google/cli/install.sh');
+    expect(snippet).toContain('export PATH="$HOME/.local/bin:$PATH"');
+    expect(snippet).not.toMatch(/\bsudo\b/);
   });
 
   it('omits claude (its binary ships with the Agent SDK, not a separate installer)', () => {
@@ -96,6 +104,6 @@ describe('isNoopInstallSnippet / installableAgentIds', () => {
   it('installableAgentIds excludes coderabbit but includes the real installers', () => {
     const ids = installableAgentIds();
     expect(ids).not.toContain('coderabbit');
-    expect(ids).toEqual(expect.arrayContaining(['codex', 'gemini', 'kimi', 'cursor', 'opencode']));
+    expect(ids).toEqual(expect.arrayContaining(['codex', 'gemini', 'kimi', 'cursor', 'opencode', 'antigravity']));
   });
 });

@@ -108,13 +108,11 @@ export const AGENT_REGISTRY: Record<AgentId, AgentMetadata> = {
     // newest that same day. Three months of sending people through a bricked
     // door — each one landing on `isGeminiIneligibleTier` at first use.
     //
-    // ⚠️ Antigravity CLI is NOT a drop-in replacement for us: no official ACP
-    // mode (google-antigravity/antigravity-cli#31 open, 192 comments, zero
-    // `acp` hits in the repo as of 2026-09-15), and every third-party ACP
-    // adapter warns that driving `agy` that way matches what Google's FAQ calls
-    // a ToS violation — risking the USER's Google account. Our whole Gemini
-    // path is ACP, so adopting it would mean shipping that risk. Revisit only
-    // when #31 ships an official mode.
+    // Antigravity CLI is its own agent now (`antigravity` below): official ACP
+    // (`agy acp`) shipped in agy 1.5.0 (2026-11-04), closing
+    // google-antigravity/antigravity-cli#31 — the reason we held off (only
+    // third-party adapters existed, which Google's FAQ called a ToS risk) is
+    // gone. Consumer-Google users belong there; Gemini CLI stays api_key only.
     //
     // Existing OAuth rows are NOT migrated: `supportedAuthMethods` gates the
     // LINK call only, so the 46 stay readable and simply keep failing at the
@@ -151,6 +149,21 @@ export const AGENT_REGISTRY: Record<AgentId, AgentMetadata> = {
     supportedAuthKinds: ['api_key'],
     preferredAuthKind: 'api_key',
     // Native ACP server: `opencode acp` (stdio JSON-RPC).
+    acp: true,
+  },
+  antigravity: {
+    id: 'antigravity',
+    displayName: 'Antigravity CLI',
+    binaryName: 'agy',
+    enabled: true,
+    // Google's successor to Gemini CLI for consumer accounts (AI Pro / Ultra /
+    // free). `oauth_token` is the backend-minted blob (Antigravity's own OAuth
+    // client, redirect flow like Gemini's) written to
+    // ~/.gemini/antigravity-cli/antigravity-oauth-token; `api_key` is a Gemini
+    // API key (GEMINI_API_KEY + settings.json `modelProvider: "gemini"`).
+    supportedAuthKinds: ['oauth_token', 'api_key'],
+    preferredAuthKind: 'oauth_token',
+    // Native ACP server: `agy acp` (official since agy 1.5.0, 2026-11-04).
     acp: true,
   },
 };

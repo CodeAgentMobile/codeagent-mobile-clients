@@ -81,6 +81,8 @@ const AGENT_SETUP_RECIPE: Record<AgentId, string | null> = {
   coderabbit: null,
   // bd 1.0.5 has no opencode recipe → skip; beads still works.
   opencode: null,
+  // bd has no Antigravity recipe → skip; beads still works.
+  antigravity: null,
 };
 
 export interface ProvisionOptions {

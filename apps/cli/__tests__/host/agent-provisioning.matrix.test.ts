@@ -33,6 +33,9 @@ function sampleValue(agentId: string, kind: AgentAuthKind): string {
   if (kind === 'api_key') return 'sk-test-key';
   if (agentId === 'claude') return 'sk-ant-oat01-test';
   if (agentId === 'cursor') return JSON.stringify({ accessToken: 'a', refreshToken: 'r', userId: 'u' });
+  if (agentId === 'antigravity') {
+    return JSON.stringify({ token: { access_token: 'a', refresh_token: 'r' }, auth_method: 'consumer' });
+  }
   if (agentId === 'codex') {
     return JSON.stringify({ auth_mode: 'chatgpt', tokens: { id_token: 'x', access_token: 'a', refresh_token: 'r', account_id: 'acc' } });
   }
@@ -54,7 +57,7 @@ describe('provisionAgentCredentials — every enabled agent × auth kind is prov
   );
 
   it('covers the agents users can deploy today', () => {
-    expect(enabled.map((m) => m.id)).toEqual(expect.arrayContaining(['claude', 'codex', 'aider', 'opencode']));
+    expect(enabled.map((m) => m.id)).toEqual(expect.arrayContaining(['claude', 'codex', 'aider', 'opencode', 'antigravity']));
   });
 
   it.each(rows)('%s / %s does not throw UnsupportedAgentError', (agentId, kind) => {

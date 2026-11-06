@@ -33,6 +33,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AgentAuth, AgentId } from '@codeam/shared';
 import { restrictToOwner } from '../../lib/restrict-to-owner';
+import {
+  antigravityOauthTokenPath,
+  antigravitySettingsPath,
+  isAntigravityOauthBlob,
+} from '../../agents/antigravity/local-token';
 
 /**
  * Map the public LinkedAgent id the deploy command carries
@@ -56,6 +61,7 @@ const PUBLIC_TO_INTERNAL_AGENT: Readonly<Record<string, AgentId>> = {
   gemini: 'gemini',
   kimi: 'kimi',
   opencode: 'opencode',
+  antigravity: 'antigravity',
 };
 
 /** Resolve a public LinkedAgent id to the internal agent id, or null. */
@@ -378,6 +384,59 @@ const kimiProvisioner: AgentProvisioner = {
   },
 };
 
+/** agy's settings.json as an object; a missing or unparsable file → `{}`. */
+function readAntigravitySettings(file: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return { ...parsed };
+    }
+  } catch {
+    // missing / not JSON → start from an empty object
+  }
+  return {};
+}
+
+const antigravityProvisioner: AgentProvisioner = {
+  write(auth, home): Record<string, string> {
+    const tokenFile = antigravityOauthTokenPath(home);
+    const settingsFile = antigravitySettingsPath(home);
+    // settings.json may hold the user's own agy preferences — merge, never clobber.
+    const settings = readAntigravitySettings(settingsFile);
+
+    if (auth.kind === 'api_key') {
+      // A Gemini API key. GEMINI_API_KEY alone does NOTHING (agy still asks to
+      // sign in): agy only takes the key when settings.json says
+      // `modelProvider: "gemini"`. Remove the OAuth login so it can't shadow
+      // the key on a re-provision that changed the auth kind.
+      rmIfExists(tokenFile);
+      writeFile0600(settingsFile, JSON.stringify({ ...settings, modelProvider: 'gemini' }));
+      return { GEMINI_API_KEY: auth.value };
+    }
+
+    // oauth_token → the backend-minted login state, written VERBATIM:
+    // {"token":{"access_token","token_type","refresh_token","expiry"},"auth_method":"consumer"}.
+    const value = auth.value.trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error('antigravity oauth_token: credential blob is not valid JSON');
+    }
+    if (!isAntigravityOauthBlob(parsed)) {
+      throw new Error('antigravity oauth_token: credential blob is missing token.access_token');
+    }
+    writeFile0600(tokenFile, value);
+    // Drop a `modelProvider` a previous api_key provision left behind, or agy
+    // would keep routing to the (now absent) Gemini API key instead of the login.
+    if ('modelProvider' in settings) {
+      delete settings.modelProvider;
+      writeFile0600(settingsFile, JSON.stringify(settings));
+    }
+    return {};
+  },
+};
+
 const coderabbitProvisioner: AgentProvisioner = {
   write(auth, home): Record<string, string> {
     const dir = path.join(home, '.coderabbit');
@@ -440,6 +499,7 @@ const PROVISIONERS: Partial<Record<AgentId, AgentProvisioner>> = {
   cursor: cursorProvisioner,
   coderabbit: coderabbitProvisioner,
   opencode: providerKeyProvisioner,
+  antigravity: antigravityProvisioner,
   // ⚠️ Was missing: every self-hosted / fleet-Box aider deploy failed with
   // "Self-hosted provisioning is not implemented for agent "aider"" (23 in
   // prod Cloud Run, 2026-09-10..10-08).

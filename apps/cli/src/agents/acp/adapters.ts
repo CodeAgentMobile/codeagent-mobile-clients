@@ -34,6 +34,7 @@ import {
 } from './agent-binary';
 import { ensureKimiInstalled, augmentKimiPath } from '../kimi/installer';
 import { ensureOpencodeInstalled, augmentOpencodePath } from '../opencode/installer';
+import { ensureAntigravityInstalled } from '../antigravity/installer';
 import { isLocalSession } from '../../baton/gate';
 
 // CommonJS module — `require` is already in scope. Aliased so we
@@ -295,6 +296,28 @@ const REGISTRY: Partial<Record<AgentId, () => AdapterSpec | null>> = {
       return waitForCommandOnPath('opencode', o);
     },
   }),
+  // Antigravity CLI speaks ACP natively via `agy acp` (official since agy 1.5.0,
+  // 2026-11-04): protocolVersion 1, `loadSession: true`. Same AdapterSpec shape
+  // as gemini/cursor/kimi. Auth reaches agy through the files the provisioner
+  // writes under ~/.gemini/antigravity-cli/ (+ GEMINI_API_KEY via the ACP
+  // client's `env: { ...process.env, ...extraEnv }` spawn).
+  //
+  // ⚠️ NO `--dangerously-skip-permissions`: no other adapter skips permissions —
+  // agy sends normal `session/request_permission` requests and OUR runner
+  // answers them (auto-approve on codespace/self-hosted, the mobile prompt on a
+  // local pair; see `permission-gate.ts`), exactly as for every other agent.
+  antigravity: () => ({
+    command: 'agy',
+    args: ['acp'],
+    requiresAgentBinary: 'agy',
+    waitForBinary: async (o) => {
+      if (isLocalSession()) await ensureAntigravityInstalled();
+      // install.sh drops agy in ~/.local/bin — fold it into a stale PATH (an
+      // in-session switch installs mid-run). The box bakes /usr/local/bin/agy.
+      augmentUserLocalBinPaths();
+      return waitForCommandOnPath('agy', o);
+    },
+  }),
 };
 
 /**
@@ -348,7 +371,7 @@ export function getAcpAdapter(agent: AgentId): AdapterSpec | null {
  * Pure, STATIC dispatch predicate: does this agent run over ACP?
  *
  * `true` ⇒ ACP is the agent's ONLY launch path (claude / codex /
- * gemini / cursor / kimi today). There is no env flag and no PTY
+ * gemini / cursor / kimi / opencode / antigravity today). There is no env flag and no PTY
  * fallback for these agents — the session must run over the typed
  * protocol or fail loudly. `false` ⇒ the agent has no ACP adapter and
  * runs over the legacy PTY runtime (aider, coderabbit).
