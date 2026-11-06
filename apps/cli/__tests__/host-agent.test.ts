@@ -4390,6 +4390,27 @@ describe('HostAgentSupervisor — re-link of an env-delivered credential', () =>
     }
   });
 
+  // Dev release gate 2026-11-06: a Box rebuilt on its volume resumed an Antigravity session with no
+  // GEMINI_API_KEY ("ACP start failed for antigravity: Authentication required") — the key lived
+  // only in the old process's memory.
+  it('api_key: a NEW host-agent process resumes the session WITH the key, persisted 0600 per deploy', async () => {
+    const first = boot({ kind: 'api_key', value: 'sk-fresh' });
+    await first.refresh();
+    first.sup.stop();
+    const file = path.join(tmpRoot, '.codeam', 'credential-env', 'dep-a.json');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).ANTHROPIC_API_KEY).toBe('sk-fresh');
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o077).toBe(0);
+
+    const second = boot({ kind: 'api_key', value: 'sk-fresh' });
+    try {
+      expect(bySession(second.spawned, 'sess-a')[0].env.ANTHROPIC_API_KEY).toBe('sk-fresh');
+      // Another agent's session never inherits it.
+      expect(bySession(second.spawned, 'sess-b')[0].env.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      second.sup.stop();
+    }
+  });
+
   it('api_key: a crash-respawn after the re-link keeps the key (it lives only in the spawn env)', async () => {
     vi.useFakeTimers();
     const { sup, spawned, refresh } = boot({ kind: 'api_key', value: 'sk-fresh' });

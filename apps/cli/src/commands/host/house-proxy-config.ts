@@ -38,14 +38,14 @@ export function houseProxyConfigPath(): string {
 }
 
 /** A deploy id is a uuid-ish path segment — never let one escape the dir. */
-const DEPLOY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+export const DEPLOY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export function deployHouseProxyConfigPath(deployId: string): string | null {
   if (!DEPLOY_ID_RE.test(deployId) || deployId.includes('..')) return null;
   return path.join(os.homedir(), '.codeam', 'house-proxy', `${deployId}.json`);
 }
 
-function writeJson0600(file: string, value: unknown): void {
+export function writeJson0600(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });
