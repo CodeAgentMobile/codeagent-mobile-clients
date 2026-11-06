@@ -41,6 +41,7 @@
  * Everything else here is complete + tested via an injected resolver.
  */
 
+import { clearCredentialEnv, persistCredentialEnv, readCredentialEnv } from './host/credential-env-store';
 import { isProcessMidTurn } from '../services/turn-marker';
 import { keepDeviceAwake, type KeepAwakeDeps } from '../services/keep-awake';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -2088,6 +2089,7 @@ export class HostAgentSupervisor {
         const credEnv = provisionAgentCredentials(payload.agentId, auth, undefined);
         if (Object.keys(credEnv).length > 0) this.credentialEnvByDeploy.set(payload.deployId, credEnv);
         else this.credentialEnvByDeploy.delete(payload.deployId);
+        persistCredentialEnv(payload.deployId, credEnv);
         childEnv = {
           ...credEnv,
           CODEAM_AUTO_TOKEN: payload.autoPairToken,
@@ -2688,7 +2690,7 @@ export class HostAgentSupervisor {
       const proc = this.resumeSpawner(
         {
           ...readHouseProxyChildEnv(deployId),
-          ...(this.credentialEnvByDeploy.get(deployId) ?? {}),
+          ...this.credentialEnvFor(deployId),
           CODEAM_RESUME_SESSION_ID: session.id,
         },
         cwd,
@@ -2942,6 +2944,7 @@ export class HostAgentSupervisor {
   private cleanupWorkspace(deployId: string): void {
     const short = deployId.slice(0, 8);
     this.credentialEnvByDeploy.delete(deployId);
+    clearCredentialEnv(deployId);
     // Stop the child if it's somehow still tracked (its own session_terminated
     // usually already exited it) so nothing holds the dir open mid-remove.
     const child = this.children.get(deployId);
@@ -2997,6 +3000,7 @@ export class HostAgentSupervisor {
       if (Object.keys(credEnv).length === 0 && AUTH_FILE_CACHED_IN_MEMORY.has(payload.agentId)) {
         for (const child of affected) {
           this.credentialEnvByDeploy.delete(child.deployId);
+          clearCredentialEnv(child.deployId);
           this.restartWithFreshCredentials(child);
         }
         log.info(
@@ -3006,7 +3010,10 @@ export class HostAgentSupervisor {
         return;
       }
       if (Object.keys(credEnv).length === 0) {
-        for (const c of affected) this.credentialEnvByDeploy.delete(c.deployId);
+        for (const c of affected) {
+          this.credentialEnvByDeploy.delete(c.deployId);
+          clearCredentialEnv(c.deployId);
+        }
         log.info(
           'host-agent',
           `refreshed credentials in place for agent=${payload.agentId} (${this.children.size} active child(ren))`,
@@ -3015,6 +3022,7 @@ export class HostAgentSupervisor {
       }
       for (const child of affected) {
         this.credentialEnvByDeploy.set(child.deployId, credEnv);
+        persistCredentialEnv(child.deployId, credEnv);
         this.restartWithFreshCredentials(child);
       }
       log.info(
@@ -3035,6 +3043,18 @@ export class HostAgentSupervisor {
    * reports `ended` nor crash-respawns), then resume the same conversation;
    * `resumeOne` waits out the dying daemon if it still holds the session.
    */
+  /**
+   * The env credential of a deploy for a (re)spawn: memory first, else what an earlier host-agent
+   * process persisted (a Box rebuilt on its volume, a wake, a self-update restart).
+   */
+  private credentialEnvFor(deployId: string): Record<string, string> {
+    const inMemory = this.credentialEnvByDeploy.get(deployId);
+    if (inMemory) return inMemory;
+    const persisted = readCredentialEnv(deployId);
+    if (Object.keys(persisted).length > 0) this.credentialEnvByDeploy.set(deployId, persisted);
+    return persisted;
+  }
+
   private restartWithFreshCredentials(child: ChildSession): void {
     const session = pickSavedSessionForWorkspace(this.listSavedSessions(), child.cwd, child.deployId);
     if (!session) {
