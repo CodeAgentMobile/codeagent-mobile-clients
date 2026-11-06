@@ -19,7 +19,7 @@
 #
 # ── Pre-installed agents + tooling (deploy-speed optimization) ─────────────
 # EVERY supported agent CLI (claude-code, codex, cursor-agent, coderabbit,
-# gemini, kimi, aider), the GitHub + GitLab CLIs (gh, glab), and Beads + Dolt
+# gemini, kimi, opencode, antigravity/agy, aider), the GitHub + GitLab CLIs (gh, glab), and Beads + Dolt
 # are baked into the image so a rescued user's FIRST deploy skips the
 # per-session installs entirely (each of those otherwise shells out to a
 # curl|sh / npm installer on first use). A box boots agent-ready. The deploy
@@ -32,7 +32,7 @@
 # cache go to NON-home locations that survive the mount:
 #   • npm-global agents + codeam-cli → /usr/local/{lib,bin}
 #   • curl-installer agents (claude/cursor/kimi/coderabbit) → /opt/agents
-#   • dolt / aider / gh / glab / composer → /usr/local/bin
+#   • dolt / aider / gh / glab / composer / agy → /usr/local/bin
 #   • php (apt) → /usr/bin
 #
 # ⚠️ SIZE RULE: NEVER `chown -R` a large tree in its own RUN — Docker's
@@ -227,6 +227,44 @@ RUN mkdir -p "${AGENT_HOME}" \
                 "${AGENT_HOME}/.local/bin/coderabbit"; do \
          if [ -x "$b" ]; then echo "  OK   $b"; else echo "  MISS $b (installs on first deploy)"; fi; \
        done
+
+# ── Antigravity CLI (`agy`) → /usr/local/bin (root-owned, pinned, no self-update) ─
+# Not via install.sh: that script always fetches the LATEST manifest (no
+# version flag), so the image would float. We download the exact release the
+# installer would have picked — same bucket, same per-platform tarball, same
+# sha512 the manifest publishes
+# (https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_<arch>.json)
+# — and verify it. Bump AGY_RELEASE + both AGY_SHA512_* together from those
+# manifests (guarded by __tests__/box/agy-version-pin.test.ts).
+#
+# /usr/local/bin, NOT ~/.local/bin: the runtime `/home/box` volume would shadow
+# a home install. The codespace/self-hosted install snippets are
+# `command -v agy`-guarded, so the baked binary short-circuits them.
+#
+# ⚠️ SELF-UPDATE: agy updates itself in the background and RELAUNCHES after an
+# update ("Failed to relaunch after update" is in the binary) — inside a live
+# `agy acp` session that would swap the binary under us and break the pin.
+# AGY_CLI_DISABLE_AUTO_UPDATE=1 (an env knob the binary reads; undocumented)
+# turns it off for every box process, and the binary is root-owned 0755 so a
+# stray update attempt can't rewrite it either. Upgrades ship with the image.
+ARG AGY_RELEASE=1.5.2-4951595792859136
+ARG AGY_SHA512_AMD64=aa876c0813572efaf85ed47983cc937414705d40490cbdb54f6e255656a4f8744ae38e457823e924fa8270b348124e0521d3cda3fec6824bb2d14b98a7a05baa
+ARG AGY_SHA512_ARM64=9a141da7b218c640a962188b388905f065cc307425bbeff6e74c07f95266f93526f6d0dee9bad876b79431403f5b30ef4e6514f5f44fbf06dca2a077f54f6175
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) dir=linux-x64; file=cli_linux_x64.tar.gz; sha="${AGY_SHA512_AMD64}" ;; \
+      arm64) dir=linux-arm; file=cli_linux_arm64.tar.gz; sha="${AGY_SHA512_ARM64}" ;; \
+      *) echo "agy: unsupported arch $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --connect-timeout 15 --max-time 300 \
+        "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_RELEASE}/${dir}/${file}" \
+        -o /tmp/agy.tar.gz; \
+    echo "${sha}  /tmp/agy.tar.gz" | sha512sum -c -; \
+    tar -xzf /tmp/agy.tar.gz -C /tmp antigravity; \
+    install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+    rm -f /tmp/agy.tar.gz /tmp/antigravity; \
+    agy --version
 
 # ── aider (pip) ────────────────────────────────────────────────────────────
 # Debian's system Python is PEP-668 "externally managed" → --break-system-packages
