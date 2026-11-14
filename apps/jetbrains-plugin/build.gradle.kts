@@ -17,7 +17,7 @@ repositories {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
-    implementation("com.google.code.gson:gson:2.14.0")
+    implementation("com.google.code.gson:gson:2.15.0")
     implementation("com.google.zxing:core:3.5.4")
     implementation("com.google.zxing:javase:3.5.4")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
