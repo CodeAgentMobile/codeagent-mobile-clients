@@ -32,7 +32,7 @@ const PASITO_PKG = {
 };
 
 describe('detectKnownProject — Remix exports', () => {
-  it('a MOBILE export with a server → the Expo detection the agent returns, with a server note', () => {
+  it('a MOBILE export with a server → the Expo detection the agent returns (the server starts beside it)', () => {
     write('package.json', PASITO_PKG);
     write('remix.json', { kind: 'MOBILE', template: 'expo-app', server: { db: true }, env: [] });
     write('index.js', "import { registerRootComponent } from 'expo';");
@@ -48,13 +48,6 @@ describe('detectKnownProject — Remix exports', () => {
     });
     // Never --tunnel: the Expo bring-up runs our own cloudflared.
     expect(got?.detection.args).not.toContain('--tunnel');
-    expect(got?.detection.notes).toMatch(/server/);
-  });
-
-  it('a MOBILE export without a server has no note', () => {
-    write('package.json', PASITO_PKG);
-    write('remix.json', { kind: 'MOBILE', template: 'expo-app' });
-    expect(detectKnownProject(dir)?.detection.notes).toBeUndefined();
   });
 
   it('an old MOBILE export without an expo dependency is still Expo (registerRootComponent entry)', () => {

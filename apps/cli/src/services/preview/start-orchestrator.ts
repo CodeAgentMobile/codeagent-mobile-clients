@@ -38,6 +38,8 @@ import {
   type ServedAddress,
 } from './served-address';
 import type { InspectorProxy } from './inspector-proxy';
+import { startAppServerProxy, type AppServerProxy } from './app-server-proxy';
+import * as remixServer from './remix-app-server';
 import { fetchNamedPreviewTunnel } from '../pairing.service';
 import { stopExportTunnel } from '../../scratch/export-tunnel';
 
@@ -108,6 +110,15 @@ interface StageCtx extends PreviewStartArgs {
    * to these on the per-user SSE bus and renders the HANDSHAKE_LOG card.
    */
   emitProgress: (step: string, message: string) => void;
+  /** A Remix app's own server, when the project has one (`remix-app-server.ts`). */
+  appServer?: AppServerUp;
+}
+
+/** The app's own server under `wrangler dev`, and the proxy that puts it on the preview's origin. */
+interface AppServerUp {
+  process: ReturnType<typeof spawn>;
+  port: number;
+  proxy: AppServerProxy | null;
 }
 
 /**
@@ -360,21 +371,143 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
 
   if (!(await provisionDeps(ctx))) return;
 
-  // Expo inverts the order — tunnel FIRST, then the dev server — because Expo
-  // reads the public URL (`EXPO_PACKAGER_PROXY_URL`) from its env at startup.
-  // Every other framework keeps dev server → tunnel. See `./expo.ts`.
-  if (detection.framework === 'Expo') {
-    await runExpoBringUp(ctx);
-    return;
+  // A Remix project's own server (`server/`) runs beside the front, the way the platform runs it.
+  // Started BEFORE the dev server so the front's first request finds it; torn down below unless
+  // the preview was registered with it (every failure path after this point).
+  const decl = remixServer.readRemixServer(ctx.cwd);
+  if (decl) {
+    const up = await startAppServer(ctx, decl);
+    if (!up) return;
+    ctx.appServer = up;
   }
+  try {
+    // Expo inverts the order — tunnel FIRST, then the dev server — because Expo
+    // reads the public URL (`EXPO_PACKAGER_PROXY_URL`) from its env at startup.
+    // Every other framework keeps dev server → tunnel. See `./expo.ts`.
+    if (detection.framework === 'Expo') {
+      await runExpoBringUp(ctx);
+      return;
+    }
 
-  const dev = await startDevServer(ctx);
-  if (!dev) return;
+    const dev = await startDevServer(ctx);
+    if (!dev) return;
 
-  const tun = await establishTunnel(ctx, dev);
-  if (!tun) return;
+    const fronted = await frontWithAppServer(ctx, dev);
+    if (!fronted) return;
 
-  announceReady(ctx, dev, tun);
+    const tun = await establishTunnel(ctx, fronted);
+    if (!tun) return;
+
+    announceReady(ctx, dev, tun);
+  } finally {
+    const own = ctx.appServer;
+    if (own && previewSvc.activePreviews.get(sessionId)?.appServer !== own) stopAppServer(own);
+  }
+}
+
+/** How long `wrangler dev` gets to bind its port (workerd's first start included). */
+const APP_SERVER_READY_TIMEOUT_MS = 90_000;
+
+/**
+ * The app's own server: config with the platform's bindings, the D1 migrations, then
+ * `wrangler dev` on a free loopback port. `null` after emitting the terminal `preview_error`.
+ */
+async function startAppServer(
+  ctx: StageCtx,
+  decl: remixServer.RemixServerDecl,
+): Promise<AppServerUp | null> {
+  const { emit, emitProgress, cwd } = ctx;
+  const fail = (message: string): null => {
+    emit(USER_EVENTS.PREVIEW_ERROR, { stage: 'spawn', message });
+    return null;
+  };
+  const { missing } = remixServer.writeWranglerConfig(cwd, decl);
+  if (missing.length > 0) {
+    log.info('preview', `app server: ${missing.join(', ')} not set in .env — left unset, as on Remix`);
+  }
+  const { bin, installPrefix } = remixServer.wranglerBinary(cwd);
+  if (installPrefix) {
+    const version = remixServer.wranglerVersionFor();
+    emitProgress('SETUP_RUN', `npm install wrangler@${version} (the app's server runtime)`);
+    const r = await previewSvc.runSetupCommand(
+      'npm',
+      ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', installPrefix, `wrangler@${version}`],
+      cwd,
+      undefined,
+      { timeoutMs: INSTALL_TIMEOUT_MS },
+    );
+    if (r.status !== 'ok' || !fs.existsSync(bin)) {
+      return fail(`The app's server needs wrangler, and installing it failed (${r.status}). Check the network and retry.`);
+    }
+  }
+  if (decl.db && remixServer.migrationFiles(cwd).length > 0) {
+    emitProgress('SETUP_RUN', 'wrangler d1 migrations apply DB --local');
+    const r = await previewSvc.runSetupCommand(
+      bin,
+      remixServer.migrationsApplyArgs(cwd),
+      cwd,
+      remixServer.wranglerEnv(),
+      { timeoutMs: INSTALL_TIMEOUT_MS },
+    );
+    if (r.status !== 'ok') {
+      return fail(
+        `The app's database migrations (server/migrations) failed to apply (${r.status}). ` +
+          'The debug log has the statement that failed.',
+      );
+    }
+  }
+  const port = await remixServer.freePort();
+  const inspectorPort = await remixServer.freePort();
+  emitProgress('BOOT_SEQUENCE', `wrangler dev (the app's server) on :${port}`);
+  const child = remixServer.spawnWranglerDev(bin, cwd, port, inspectorPort);
+  let tail = '';
+  const onChunk = (b: Buffer): void => {
+    tail = (tail + b.toString('utf8')).slice(-4_000);
+  };
+  child.stdout?.on('data', onChunk);
+  child.stderr?.on('data', onChunk);
+  child.on('error', (err) => onChunk(Buffer.from(String(err))));
+  const exited = new Promise<'exited'>((resolve) => child.once('exit', () => resolve('exited')));
+  const ready = previewSvc
+    .waitForPortListening(port, { timeoutMs: APP_SERVER_READY_TIMEOUT_MS, intervalMs: 300 })
+    .then((ok) => (ok ? ('ready' as const) : ('timeout' as const)));
+  const outcome = await Promise.race([ready, exited]);
+  if (outcome !== 'ready') {
+    previewSvc.killProcessTree(child, 'SIGKILL');
+    log.info('preview', `app server failed (${outcome}):\n${tail}`);
+    const reason = stripAnsi(tail).trim().split('\n').slice(-6).join('\n');
+    return fail(`The app's server (server/) didn't start${reason ? `:\n${reason}` : '.'}`);
+  }
+  log.info('preview', `app server: wrangler dev ready on :${port}`);
+  return { process: child, port, proxy: null };
+}
+
+function stopAppServer(up: AppServerUp): void {
+  void up.proxy?.close().catch(() => undefined);
+  previewSvc.killProcessTree(up.process, 'SIGTERM');
+}
+
+/**
+ * A web app with its own server: the dev server is fronted by the app-server proxy, so the page's
+ * relative `api/…` calls reach the server on the same origin. Without a server, `dev` unchanged.
+ */
+async function frontWithAppServer(ctx: StageCtx, dev: DevServerUp): Promise<DevServerUp | null> {
+  const up = ctx.appServer;
+  if (!up) return dev;
+  try {
+    up.proxy = await startAppServerProxy({
+      devPort: dev.served.port,
+      devHost: dev.served.host,
+      serverPort: up.port,
+      injectBase: false,
+      routeRoot: true,
+    });
+  } catch (err) {
+    if (dev.devServer) previewSvc.killProcessTree(dev.devServer, 'SIGTERM');
+    ctx.emit(USER_EVENTS.PREVIEW_ERROR, { stage: 'spawn', message: `The app's server proxy failed: ${String(err)}` });
+    return null;
+  }
+  return { ...dev, served: { ...dev.served, host: '127.0.0.1', port: up.proxy.port } };
 }
 
 /**
@@ -411,14 +544,38 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
     if (!web) emitProgress('SETUP_RUN', `web packages not installed (${r.status}) — Expo Go only`);
   }
 
+  // The app's own server: Metro behind the app-server proxy, which serves the server on the same
+  // origin and hands the app its `__REMIX_SERVER_BASE__` (prepended to every bundle).
+  let tunnelPort = detection.port;
+  if (ctx.appServer) {
+    try {
+      ctx.appServer.proxy = await startAppServerProxy({
+        devPort: detection.port,
+        serverPort: ctx.appServer.port,
+        injectBase: true,
+        routeRoot: false,
+      });
+      tunnelPort = ctx.appServer.proxy.port;
+    } catch (err) {
+      emit(USER_EVENTS.PREVIEW_ERROR, { stage: 'spawn', message: `The app's server proxy failed: ${String(err)}` });
+      return;
+    }
+  }
   emitProgress('TUNNEL_STARTING', `cloudflared quick tunnel → Expo :${detection.port}`);
-  const pub = await bringUpPublicUrl(ctx, detection.port);
+  const pub = await bringUpPublicUrl(ctx, tunnelPort);
   if (!pub.ok) {
     emit(USER_EVENTS.PREVIEW_ERROR, { stage: 'tunnel', message: pub.message });
     return;
   }
 
-  const dev = await startDevServer(ctx, { [previewSvc.EXPO_PACKAGER_PROXY_URL_ENV]: pub.url });
+  const dev = await startDevServer(ctx, {
+    [previewSvc.EXPO_PACKAGER_PROXY_URL_ENV]: pub.url,
+    // A Remix MOBILE export has .tsx files and no `typescript` dependency: without this, a
+    // non-interactive `expo start` exits ("you're trying to use TypeScript but don't have the
+    // required dependencies installed"). Metro transpiles TS with Babel; the preview never
+    // type-checks, so the prerequisite is skipped instead of installing anything.
+    EXPO_NO_TYPESCRIPT_SETUP: '1',
+  });
   if (!dev) {
     // Terminal event already emitted (error, or a `preview_ready` reuse that
     // has its own tunnel) — don't leak the connector we brought up first.
@@ -446,6 +603,7 @@ function announceReady(ctx: StageCtx, dev: DevServerUp, tun: TunnelUp): void {
     devServer: dev.devServer,
     tunnel: tun.tunnel,
     inspector: tun.inspector,
+    appServer: ctx.appServer ?? null,
     url: tun.url,
     expoGoUrl: tun.expoGoUrl,
     framework: detection.framework,
