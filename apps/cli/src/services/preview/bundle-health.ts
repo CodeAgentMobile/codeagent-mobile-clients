@@ -86,13 +86,15 @@ export async function checkAppBundle(
 /**
  * Keep the preview's runtime files out of the user's `git status` (the change card counted 21
  * files / +8788 lines of `.wrangler/` + `.codeam/`). Written to `.git/info/exclude` — never the
- * user's `.gitignore` — and only once. A committed `.codeam/preview.json` stays visible.
+ * user's `.gitignore` — and only once. A committed `.codeam/preview.json` stays visible (git never
+ * excludes a tracked file).
  */
 export const GIT_EXCLUDE_LINES = [
   '# CodeAgent preview runtime files',
   '/.wrangler/',
-  '/.codeam/*',
-  '!/.codeam/preview.json',
+  // The whole folder: git never hides a TRACKED file, so a committed .codeam/preview.json stays
+  // visible anyway, and the one we write ourselves (the detection cache) is ours, not a change.
+  '/.codeam/',
 ];
 
 export function addPreviewGitExcludes(excludeFile: string): boolean {

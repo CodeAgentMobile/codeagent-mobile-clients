@@ -164,7 +164,7 @@ describe('git exclude', () => {
     expect(addPreviewGitExcludes(file)).toBe(false);
     expect(readFileSync(file, 'utf8')).toBe(
       '# git ls-files --others --exclude-from=.git/info/exclude\n*.local\n' +
-        '# CodeAgent preview runtime files\n/.wrangler/\n/.codeam/*\n!/.codeam/preview.json\n',
+        '# CodeAgent preview runtime files\n/.wrangler/\n/.codeam/\n',
     );
   });
 });

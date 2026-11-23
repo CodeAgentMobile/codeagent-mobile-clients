@@ -22,6 +22,7 @@ import {
   REMIX_SERVER_COMPATIBILITY_DATE,
 } from '../../src/services/preview/remix-app-server';
 import {
+  devRequestHeaders,
   isBundleRequest,
   publicOriginOf,
   routeFor,
@@ -169,6 +170,22 @@ describe('app-server proxy — routing like the platform Worker (dispatch.ts)', 
   });
 });
 
+describe('app-server proxy — the dev server sees a same-origin request as its own', () => {
+  it("rewrites a same-origin Origin to the dev server's (Expo 500s a foreign one: the icon fonts)", () => {
+    const h = devRequestHeaders(
+      { host: 'p.example.com', origin: 'https://p.example.com', 'sec-fetch-dest': 'font' },
+      8081,
+    );
+    expect(h).toMatchObject({ host: 'localhost:8081', origin: 'http://localhost:8081' });
+  });
+  it('leaves a cross-origin Origin alone, and adds none when there was none', () => {
+    expect(devRequestHeaders({ host: 'p.example.com', origin: 'https://evil.example' }, 8081).origin).toBe(
+      'https://evil.example',
+    );
+    expect(devRequestHeaders({ host: 'p.example.com' }, 8081).origin).toBeUndefined();
+  });
+});
+
 describe('app-server proxy — live', () => {
   const listen = (handler: http.RequestListener): Promise<http.Server> =>
     new Promise((resolve) => {
@@ -184,7 +201,9 @@ describe('app-server proxy — live', () => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"ok":true}');
     });
+    const devOrigins: (string | undefined)[] = [];
     const dev = await listen((req, res) => {
+      devOrigins.push(req.headers.origin);
       if (req.url?.startsWith('/index.bundle')) {
         res.writeHead(200, { 'content-type': 'application/javascript', 'content-length': '7' });
         res.end('var a=1');
@@ -211,6 +230,9 @@ describe('app-server proxy — live', () => {
       expect(bundle).toBe(`globalThis.__REMIX_SERVER_BASE__="${base}/_v/local/";var a=1`);
       expect(await (await fetch(`${base}/hbc.bundle?platform=ios`)).text()).toBe('BYTES');
       expect(await (await fetch(`${base}/`)).text()).toBe('<html></html>');
+      // A same-origin font request reaches the dev server with its own origin.
+      await fetch(`${base}/assets/?unstable_path=Feather.ttf`, { headers: { Origin: base } });
+      expect(devOrigins.at(-1)).toBe(`http://localhost:${portOf(dev)}`);
     } finally {
       await proxy.close();
       appServer.close();

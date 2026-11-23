@@ -95,6 +95,24 @@ export function serverRequestHeaders(
   return out;
 }
 
+/**
+ * The dev server's headers for a request the proxy forwards to it. Host becomes the dev server's
+ * own (as the inspector proxy does), and a SAME-ORIGIN request's `Origin` follows it: Expo's dev
+ * middleware refuses an origin that is not its own host with a 500 (`default-src 'none'`), so the
+ * icon fonts (`/assets/?unstable_path=…Feather.ttf`, fetched by the browser with `Origin`) failed
+ * on the owner's codespace while curl, which sends none, got them (2026-11-23). A cross-origin
+ * `Origin` is left alone.
+ */
+export function devRequestHeaders(
+  headers: http.IncomingHttpHeaders,
+  devPort: number,
+): http.OutgoingHttpHeaders {
+  const out = upstreamRequestHeaders(headers, devPort);
+  const origin = one(headers.origin);
+  if (origin && origin === publicOriginOf(headers)) out.origin = `http://localhost:${devPort}`;
+  return out;
+}
+
 export async function startAppServerProxy(opts: AppServerProxyOptions): Promise<AppServerProxy> {
   const devHost = opts.devHost ?? '127.0.0.1';
   const upgraded = new Set<import('stream').Duplex>();
@@ -107,7 +125,7 @@ export async function startAppServerProxy(opts: AppServerProxyOptions): Promise<
     const inject = !toServer && opts.injectBase && isBundleRequest(url);
     const headers = toServer
       ? serverRequestHeaders(req.headers, opts.serverPort, origin)
-      : upstreamRequestHeaders(req.headers, opts.devPort);
+      : devRequestHeaders(req.headers, opts.devPort);
     // Can't prepend into compressed bytes: bundles come uncompressed through the proxy.
     if (inject) delete headers['accept-encoding'];
     const upstream = http.request(
@@ -148,7 +166,7 @@ export async function startAppServerProxy(opts: AppServerProxyOptions): Promise<
     const port = toServer ? opts.serverPort : opts.devPort;
     const headers = toServer
       ? serverRequestHeaders(req.headers, opts.serverPort, publicOriginOf(req.headers))
-      : upstreamRequestHeaders(req.headers, opts.devPort);
+      : devRequestHeaders(req.headers, opts.devPort);
     const upstream = net.connect(port, toServer ? '127.0.0.1' : devHost, () => {
       const lines = [`${req.method} ${toServer ? route.path : url} HTTP/1.1`];
       for (const [k, v] of Object.entries(headers)) {
