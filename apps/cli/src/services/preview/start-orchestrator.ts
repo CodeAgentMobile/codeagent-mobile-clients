@@ -363,6 +363,12 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
   }
   ctx.cwd = appDir.dir;
 
+  // Keep our runtime files (.wrangler/, .codeam/) out of the user's git status. Best-effort.
+  void previewSvc
+    .gitExcludePath(ctx.rootCwd)
+    .then((file) => file && previewSvc.addPreviewGitExcludes(file))
+    .catch(() => undefined);
+
   emit(USER_EVENTS.PREVIEW_STARTING, {
     framework: detection.framework,
     port: detection.port,
@@ -391,6 +397,11 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
 
     const dev = await startDevServer(ctx);
     if (!dev) return;
+    // Vite only: its entry module is a sure signal (other frameworks keep the old readiness).
+    if (/vite/i.test(detection.framework) && !(await appBuilds(ctx, dev.served.port, dev.served.host))) {
+      if (dev.devServer) previewSvc.killProcessTree(dev.devServer, 'SIGTERM');
+      return;
+    }
 
     const fronted = await frontWithAppServer(ctx, dev);
     if (!fronted) return;
@@ -403,6 +414,58 @@ export async function runPreviewStart(args: PreviewStartArgs): Promise<void> {
     const own = ctx.appServer;
     if (own && previewSvc.activePreviews.get(sessionId)?.appServer !== own) stopAppServer(own);
   }
+}
+
+/**
+ * Packages the app imports but neither declares nor has installed (a Remix export: the players
+ * supply platform modules, so its package.json may miss `expo-clipboard` & co.). Installed with
+ * `expo install` — SDK-compatible versions — which also records them in package.json: that is
+ * what makes the repo runnable. Only names that exist on npm; aliases and built-ins never.
+ * Best-effort: a failure leaves Metro to name the module.
+ */
+async function installMissingImports(ctx: StageCtx): Promise<void> {
+  let missing: string[];
+  try {
+    missing = previewSvc.findMissingImports(ctx.cwd);
+  } catch (err) {
+    log.info('preview', `import scan failed (non-fatal): ${String(err)}`);
+    return;
+  }
+  if (missing.length === 0) return;
+  const exists = await Promise.all(missing.map((n) => previewSvc.npmPackageExists(n)));
+  const real = missing.filter((_, i) => exists[i]);
+  const skipped = missing.filter((_, i) => !exists[i]);
+  if (skipped.length > 0) log.info('preview', `imports not on npm, not installed: ${skipped.join(', ')}`);
+  if (real.length === 0) return;
+  log.info(
+    'preview',
+    `the app imports ${real.join(', ')} but package.json doesn't declare them — ` +
+      'installing with `expo install` (this adds them to package.json)',
+  );
+  const install = previewSvc.expoInstallCommand(ctx.cwd, real);
+  ctx.emitProgress('SETUP_RUN', `expo install ${real.join(' ')} (modules the app imports)`);
+  const r = await previewSvc.runSetupCommand(install.cmd, install.args, ctx.cwd, ctx.detection.env, {
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  if (r.status !== 'ok') log.info('preview', `expo install ${real.join(' ')} → ${r.status} (non-fatal)`);
+}
+
+/**
+ * The page AND its entry script answer (Metro's bundle / Vite's module entry): a build error is a
+ * `preview_error` with the build's own text, never a white page announced as ready. Running out of
+ * time is not a failure (a first Metro build can be slow): the preview goes on.
+ */
+async function appBuilds(ctx: StageCtx, port: number, host?: string): Promise<boolean> {
+  ctx.emitProgress('WAITING_FOR_READY', 'building the app');
+  const health = await previewSvc.checkAppBundle(port, { host });
+  if (health.ok === 'unknown') log.info('preview', `bundle check inconclusive: ${health.reason}`);
+  if (health.ok !== false) return true;
+  log.info('preview', `the app does not build (${health.status ?? '-'}):\n${health.error}`);
+  ctx.emit(USER_EVENTS.PREVIEW_ERROR, {
+    stage: 'spawn',
+    message: `Your app didn't build:\n${health.error}`,
+  });
+  return false;
 }
 
 /** How long `wrangler dev` gets to bind its port (workerd's first start included). */
@@ -523,6 +586,8 @@ async function frontWithAppServer(ctx: StageCtx, dev: DevServerUp): Promise<DevS
 async function runExpoBringUp(ctx: StageCtx): Promise<void> {
   const { detection, emit, emitProgress } = ctx;
 
+  await installMissingImports(ctx);
+
   // The WEB preview (owner 2026-10-31): Metro serves the app to a browser once `react-dom`
   // resolves from the project, so the web packages are installed first (`--no-save`, the
   // project's package.json is the user's). Best-effort: without them the preview is the Expo Go
@@ -579,6 +644,12 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
   if (!dev) {
     // Terminal event already emitted (error, or a `preview_ready` reuse that
     // has its own tunnel) — don't leak the connector we brought up first.
+    killQuiet(pub.tunnel);
+    return;
+  }
+
+  if (web && !(await appBuilds(ctx, detection.port))) {
+    if (dev.devServer) previewSvc.killProcessTree(dev.devServer, 'SIGTERM');
     killQuiet(pub.tunnel);
     return;
   }

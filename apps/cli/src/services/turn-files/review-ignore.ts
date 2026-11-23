@@ -56,6 +56,8 @@ const CURATED_REVIEW_IGNORE: readonly string[] = [
   // CodeAgent's own runtime prefixes (never a user change).
   '.codeam/',
   'codeam-node20/',
+  // A Remix app server's local runtime state (wrangler dev / miniflare D1).
+  '.wrangler/',
   // Beads (issue tracker + agent memory) and its Dolt store — our tooling's
   // state, written on every bd op; it showed up as `.beads/issues.jsonl` in
   // the user's review (break-it 2026-09-26).
