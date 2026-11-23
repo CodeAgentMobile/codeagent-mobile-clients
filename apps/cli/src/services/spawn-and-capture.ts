@@ -58,6 +58,9 @@ export interface SpawnAndCaptureOpts {
   onFailedOutput?: (stdout: string) => void;
 }
 
+/** How long after `exit` to wait for stdout to drain before settling anyway. */
+const EXIT_DRAIN_GRACE_MS = 500;
+
 export async function spawnAndCapture(
   cmd: string,
   args: ReadonlyArray<string>,
@@ -107,17 +110,30 @@ export async function spawnAndCapture(
       activeChildren.delete(child);
       settle(null);
     });
-    child.on('exit', (code) => {
+    // `exit` can fire BEFORE the last stdout chunk is read (seen in CI: a
+    // failed one-shot's "API_KEY_INVALID" lost), so settle on `close` — the
+    // stdio streams are drained by then — with a short grace after `exit` for
+    // a grandchild that keeps the pipe open (an agent's background daemon).
+    let exitCode: number | null | undefined;
+    const finish = (): void => {
       clearTimeout(timer);
       activeChildren.delete(child);
-      if (code !== 0) {
+      if (exitCode !== 0) {
         const failedOut = stdout.trim();
-        if (failedOut) opts.onFailedOutput?.(failedOut);
+        if (failedOut && !settled) opts.onFailedOutput?.(failedOut);
         settle(null);
         return;
       }
       const trimmed = stdout.trim();
       settle(trimmed.length > 0 ? trimmed : null);
+    };
+    child.on('exit', (code) => {
+      exitCode = code;
+      setTimeout(finish, EXIT_DRAIN_GRACE_MS).unref();
+    });
+    child.on('close', (code) => {
+      if (exitCode === undefined) exitCode = code;
+      finish();
     });
   });
 }
