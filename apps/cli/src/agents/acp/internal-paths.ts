@@ -36,15 +36,36 @@ import * as os from 'node:os';
  */
 
 /**
- * Substring tokens that unambiguously denote CodeAgent platform internals, for
- * matching against arbitrary tool input (a bash command string, a Read path,
- * a glob). `.codeam` matches `~/.codeam/**` and `.codeam-host.log` but NOT
- * `/tmp/codeam-node20` (no leading dot); `bd` commands (`bd ready`,
- * `bd remember …`) never contain `.codeam`, so beads keeps working. We
- * deliberately do NOT match a bare `.beads` here — a project's own `./.beads`
- * is legitimate; the home `~/.beads` is caught by {@link pathIsInternal}.
+ * `house-claude` never names a user's file, so any mention of it is internal.
+ * `.codeam` is different: it is BOTH our home runtime dir (`~/.codeam`) AND the
+ * documented PROJECT override dir (`<repo>/.codeam/preview.json`,
+ * `<repo>/.codeam/provision/`). A bare substring match blocked an agent writing
+ * its own project's `.codeam/preview.json` (Antigravity, 2026-11-23), so every
+ * `.codeam` mention is resolved to a path (against the session cwd) and judged
+ * by {@link pathIsInternal}, which is anchored at the HOME dir. We deliberately
+ * do NOT match a bare `.beads` here — a project's own `./.beads` is legitimate;
+ * the home `~/.beads` is caught by {@link pathIsInternal}.
  */
-const INTERNAL_TOKENS = ['.codeam', 'house-claude'];
+const ALWAYS_INTERNAL_TOKEN = 'house-claude';
+
+/** Characters that end a path inside a shell command / tool title. */
+const PATH_DELIMS = /[\s'"`;|&<>()=,\[\]]/;
+
+/** The path-like token around `text[index]`. */
+function tokenAt(text: string, index: number): string {
+  let a = index;
+  while (a > 0 && !PATH_DELIMS.test(text[a - 1])) a--;
+  let b = index;
+  while (b < text.length && !PATH_DELIMS.test(text[b])) b++;
+  return text.slice(a, b);
+}
+
+/** A token as an absolute path: `~`/`$HOME` → home, relative → the session cwd. */
+function resolveToken(token: string, homeDir: string, cwd: string): string {
+  const home = token.match(/^(?:~|\$HOME|\$\{HOME\})(?=$|[/\\])/);
+  if (home) return path.join(homeDir, token.slice(home[0].length));
+  return path.resolve(cwd, token);
+}
 
 /**
  * ACP ToolKinds whose `rawInput`/`title` carry free-form PROSE ABOUT the work —
@@ -66,38 +87,74 @@ export function isProseOnlyToolKind(kind: string | null | undefined): boolean {
 }
 
 /**
- * The per-deploy WORKSPACE lives at `~/.codeam/self-hosted/<deployId>/` — that
- * subtree is the USER's cloned project (a warm codespace / self-hosted box
- * clones repos there), NOT a CodeAgent internal. Its path literally contains
- * `.codeam`, so the naive `.codeam` substring token would false-flag EVERY tool
- * call whose cwd/paths sit inside the workspace. ⚠️ Rafael, 2026-08-05: in a warm
- * codespace, every `git commit` / edit / read was denied in MANUAL permission
- * mode (in AUTO the agent uses `bypassPermissions` and never asks the client, so
- * the guard never ran — hence "manual denies, auto works"). Neutralize the
- * self-hosted workspace prefix before the internal-token scan.
+ * True if arbitrary text (bash command, tool title, a tool-input string)
+ * references an internal path. Each `.codeam` occurrence is resolved to the
+ * path it sits in — `~/…` and `$HOME/…` against the home dir, a relative one
+ * against the session cwd — so `cat ~/.codeam/host-agent.json` is internal and
+ * `.codeam/preview.json` in a project is not. The per-deploy workspace at
+ * `~/.codeam/self-hosted/<deployId>/` is the USER's cloned repo (⚠️ Rafael,
+ * 2026-08-05: every git commit/edit there was denied in MANUAL mode); it is
+ * exempted by {@link pathIsInternal}.
  */
-const SELF_HOSTED_WORKSPACE_RE = /\.codeam[/\\]self-hosted/gi;
-
-/** True if arbitrary text (bash command, serialized tool input) references an internal path. */
-export function textReferencesInternal(text: string | null | undefined): boolean {
+export function textReferencesInternal(
+  text: string | null | undefined,
+  homeDir: string = os.homedir(),
+  cwd: string = process.cwd(),
+): boolean {
   if (!text) return false;
-  const scrubbed = text.replace(SELF_HOSTED_WORKSPACE_RE, ' ');
-  return INTERNAL_TOKENS.some((t) => scrubbed.includes(t));
+  if (text.includes(ALWAYS_INTERNAL_TOKEN)) return true;
+  for (let i = text.indexOf('.codeam'); i !== -1; i = text.indexOf('.codeam', i + 1)) {
+    if (pathIsInternal(resolveToken(tokenAt(text, i), homeDir, cwd), homeDir, cwd)) return true;
+  }
+  return false;
+}
+
+/** Every string inside a tool's `rawInput`, so paths are scanned as written (not JSON-escaped). */
+function stringsIn(v: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 8) return out;
+  if (typeof v === 'string') out.push(v);
+  else if (Array.isArray(v)) for (const x of v) stringsIn(x, out, depth + 1);
+  else if (v && typeof v === 'object') for (const x of Object.values(v)) stringsIn(x, out, depth + 1);
+  return out;
 }
 
 /**
- * Precise absolute-path check for the fs read/write seam: within `~/.codeam`,
- * `~/.beads`, `~/.codeam-host.log`, or any `house-claude` directory.
+ * The project files under `<cwd>/.codeam/` the docs tell an agent (and a team)
+ * to write: the Preview override and the generated service compose. Only these
+ * matter when the repo IS the home dir (`<cwd>/.codeam` === `~/.codeam`);
+ * anywhere else a project's `.codeam/` is outside `~/.codeam` anyway.
  */
-export function pathIsInternal(p: string | null | undefined, homeDir: string = os.homedir()): boolean {
+function isProjectOverride(abs: string, cwd: string): boolean {
+  const dir = path.join(path.resolve(cwd), '.codeam');
+  const provision = path.join(dir, 'provision');
+  return (
+    abs === path.join(dir, 'preview.json') ||
+    abs === provision ||
+    abs.startsWith(provision + path.sep)
+  );
+}
+
+/**
+ * Precise path check for the fs read/write seam: within `~/.codeam`,
+ * `~/.beads`, `~/.codeam-host.log`, or any `house-claude` directory. A
+ * relative path resolves against the session cwd; the project's own
+ * `.codeam/preview.json` / `.codeam/provision/` never count, even in a repo
+ * cloned AT the home dir.
+ */
+export function pathIsInternal(
+  p: string | null | undefined,
+  homeDir: string = os.homedir(),
+  cwd: string = process.cwd(),
+): boolean {
   if (!p) return false;
-  const abs = path.resolve(p);
+  const abs = path.resolve(cwd, p);
   const home = path.resolve(homeDir);
   const within = (root: string) => abs === root || abs.startsWith(root + path.sep);
   // The user's cloned project lives under ~/.codeam/self-hosted/<deployId>/ — it
-  // is NOT an internal (see SELF_HOSTED_WORKSPACE_RE). Must be checked BEFORE the
+  // is NOT an internal (see textReferencesInternal). Must be checked BEFORE the
   // ~/.codeam catch-all below, which would otherwise swallow the whole workspace.
   if (within(path.join(home, '.codeam', 'self-hosted'))) return false;
+  if (isProjectOverride(abs, cwd)) return false;
   return (
     within(path.join(home, '.codeam')) ||
     within(path.join(home, '.beads')) ||
@@ -124,21 +181,15 @@ export function toolCallReferencesInternal(
     rawInput?: unknown;
     locations?: ReadonlyArray<{ path: string }> | null;
   },
-  homeDir?: string,
+  homeDir: string = os.homedir(),
+  cwd: string = process.cwd(),
 ): boolean {
   // Structured path field — authoritative for EVERY kind, prose ones included.
-  if (call.locations?.some((l) => pathIsInternal(l.path, homeDir))) return true;
+  if (call.locations?.some((l) => pathIsInternal(l.path, homeDir, cwd))) return true;
   // Free-text scan only for kinds whose input IS a path/command.
   if (isProseOnlyToolKind(call.kind)) return false;
-  if (textReferencesInternal(call.title)) return true;
-  if (call.rawInput != null) {
-    try {
-      return textReferencesInternal(JSON.stringify(call.rawInput));
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  if (textReferencesInternal(call.title, homeDir, cwd)) return true;
+  return stringsIn(call.rawInput).some((t) => textReferencesInternal(t, homeDir, cwd));
 }
 
 /**
@@ -160,10 +211,11 @@ export function internalPathPermissionOutcome(
     options: ReadonlyArray<{ optionId: string; kind: string }>;
   },
   homeDir?: string,
+  cwd?: string,
 ):
   | { outcome: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' } }
   | null {
-  if (!toolCallReferencesInternal(request.toolCall, homeDir)) return null;
+  if (!toolCallReferencesInternal(request.toolCall, homeDir, cwd)) return null;
   // Prefer reject_ONCE: the guard re-evaluates every call anyway, and a
   // `reject_always` permanently poisons the tool for the whole session (the
   // 2026-08-19 plan-mode wedge). One blocked call must never disable a tool.

@@ -100,6 +100,7 @@ import {
   isUnsupportedDetection,
   describeDetectionFailure,
   listScriptCandidates,
+  detectKnownProject,
   prewarmNodeDeps,
   describeOneShotAgentError,
   looksLikeManagedCreditsExhausted,
@@ -1963,7 +1964,9 @@ export function originPayload(
 export type PreviewCtx = Pick<BaseHandlerContext, 'sessionId' | 'pluginId'>;
 
 /**
- * Resolve HOW to start this project: `.codeam/preview.json` first, else the
+ * Resolve HOW to start this project: `.codeam/preview.json` first, then a
+ * deterministic detection for projects whose command is certain
+ * (`detectKnownProject`: Remix exports, plain Expo / Vite apps), else the
  * agent's headless one-shot. Emits `preview_detection_pending` and every
  * `preview_error` itself; returns the detection (never `unsupported`) or null
  * once the error has been reported. The caller decides what a success means —
@@ -2013,6 +2016,28 @@ export async function resolvePreviewDetection(args: {
     });
     return null;
   }
+  // `.codeam/preview.json` short-circuits the agent step entirely
+  // when a repo has been pinned. Saves the user 30-90 s + the LLM
+  // tokens, and lets a team commit the override so every dev gets
+  // an instant preview on first try.
+  const fromFile = await readPreviewConfig(process.cwd());
+  if (fromFile) {
+    log.info('preview', `detect: path=preview.json (${fromFile.framework})`);
+    return fromFile;
+  }
+  // A project whose start command is certain (a Remix export, a plain Expo or
+  // Vite app) needs no LLM — and works on agents without a one-shot too. The
+  // Antigravity one-shot that never answered for a Remix Expo export
+  // (2026-11-23) is why this runs BEFORE the agent. Not persisted: it is
+  // instant, and a pinned copy would stop tracking the project's own scripts.
+  const known = detectKnownProject(process.cwd());
+  if (known) {
+    log.info(
+      'preview',
+      `detect: path=deterministic kind=${known.kind} (${known.detection.framework} on :${known.detection.port})`,
+    );
+    return known.detection;
+  }
   if (typeof runtime.generateOneShot !== 'function') {
     log.info('preview', `runtime ${runtime.id} has no generateOneShot — emitting unsupported`);
     emitError({
@@ -2023,23 +2048,20 @@ export async function resolvePreviewDetection(args: {
     return null;
   }
   const generateOneShot = runtime.generateOneShot.bind(runtime);
-  // `.codeam/preview.json` short-circuits the agent step entirely
-  // when a repo has been pinned. Saves the user 30-90 s + the LLM
-  // tokens, and lets a team commit the override so every dev gets
-  // an instant preview on first try.
-  const fromFile = await readPreviewConfig(process.cwd());
-  if (fromFile) {
-    log.info('preview', `detect: using .codeam/preview.json (${fromFile.framework})`);
-    return fromFile;
-  }
 
   emit(USER_EVENTS.PREVIEW_DETECTION_PENDING);
-  log.info('preview', 'detect: invoking generateOneShot');
+  log.info('preview', `detect: path=agent (${runtime.id} one-shot)`);
   const startedAt = Date.now();
   const { raw, timedOut, stderr } = await runDetectOneShot(generateOneShot);
   const tookMs = Date.now() - startedAt;
   if (timedOut) {
-    log.info('preview', `detect: timed out after ${tookMs}ms — emitting preview_error`);
+    // What the agent said before the deadline is the only clue to WHY it never
+    // answered (Antigravity, 2026-11-23: nothing was logged). Bounded tail.
+    log.info(
+      'preview',
+      `detect: timed out after ${tookMs}ms — emitting preview_error` +
+        (stderr.trim() ? `\n--- agent stderr (tail) ---\n${stderr.slice(-1_500)}` : ' (agent printed nothing)'),
+    );
     emitError({
       stage: 'detection',
       reason: 'timeout',
@@ -2252,6 +2274,7 @@ export function prewarmPreviewDetection(runtime: RuntimeStrategy): void {
     try {
       const cwd = process.cwd();
       if (await readPreviewConfig(cwd)) return; // already pinned/cached — nothing to do
+      if (detectKnownProject(cwd)) return; // certain without the agent — never bill a one-shot
       // Same gate as the on-demand detect: an untouched scratch project has
       // nothing to serve. The prewarm fires 20 s after pairing, when a scratch
       // workspace is ALWAYS still empty, and the one-shot bills a credits user's

@@ -13,7 +13,31 @@ describe('internal-paths — CodeAgent internals guard predicates', () => {
     it('flags references to ~/.codeam and house-claude', () => {
       expect(textReferencesInternal('cat ~/.codeam/host-agent.json')).toBe(true);
       expect(textReferencesInternal('cat ~/.codeam/house-claude/x/.claude.json')).toBe(true);
-      expect(textReferencesInternal('cat .codeam-host.log')).toBe(true);
+      // Relative mentions resolve against the session cwd: the host log is internal when the
+      // session runs AT home, and a same-named file in a project is the project's.
+      expect(textReferencesInternal('cat .codeam-host.log', HOME, HOME)).toBe(true);
+      expect(textReferencesInternal('cat .codeam-host.log', HOME, '/workspaces/app')).toBe(false);
+      expect(textReferencesInternal('cat $HOME/.codeam/host-agent.json', HOME, '/workspaces/app')).toBe(true);
+      expect(textReferencesInternal('cat ${HOME}/.codeam/config.json', HOME, '/workspaces/app')).toBe(true);
+    });
+    // 2026-11-23 (Antigravity on a Box): writing the PROJECT's documented Preview override was
+    // auto-blocked as "CodeAgent's own runtime files (~/.codeam)" — a bare ".codeam" substring match.
+    it("does NOT flag the project's own .codeam/ (preview override, provision)", () => {
+      const cwd = '/home/box/workspace/pasito';
+      expect(textReferencesInternal('File .codeam/preview.json', HOME, cwd)).toBe(false);
+      expect(textReferencesInternal('mkdir -p .codeam && cat > .codeam/preview.json', HOME, cwd)).toBe(false);
+      expect(textReferencesInternal(`${cwd}/.codeam/preview.json`, HOME, cwd)).toBe(false);
+      expect(textReferencesInternal('ls .codeam/provision/', HOME, cwd)).toBe(false);
+      // …while the HOME dir stays off-limits from the same cwd.
+      expect(textReferencesInternal('cat ~/.codeam/config.json', HOME, cwd)).toBe(true);
+      expect(textReferencesInternal('cat ../../.codeam/host-agent.json', HOME, cwd)).toBe(true);
+    });
+    it('a repo cloned AT home: only the documented project files under .codeam/ pass', () => {
+      expect(textReferencesInternal('File .codeam/preview.json', HOME, HOME)).toBe(false);
+      expect(textReferencesInternal('cat .codeam/provision/compose.generated.yaml', HOME, HOME)).toBe(false);
+      expect(textReferencesInternal('cat .codeam/config.json', HOME, HOME)).toBe(true);
+      expect(textReferencesInternal('cat .codeam/preview-ports.json', HOME, HOME)).toBe(true);
+      expect(textReferencesInternal('ls .codeam', HOME, HOME)).toBe(true);
     });
     it('does NOT flag the self-hosted workspace subtree (the user\'s cloned project)', () => {
       // Rafael 2026-08-05: warm-codespace/self-hosted repos live at
@@ -59,6 +83,21 @@ describe('internal-paths — CodeAgent internals guard predicates', () => {
       expect(pathIsInternal(`${HOME}/.codeam/host-agent.json`, HOME)).toBe(true);
       expect(pathIsInternal(`${HOME}/.codeam/house-claude/dep/x`, HOME)).toBe(true);
     });
+    it("does NOT flag the project's .codeam/preview.json, relative or absolute", () => {
+      const cwd = '/workspaces/pasito';
+      expect(pathIsInternal('.codeam/preview.json', HOME, cwd)).toBe(false);
+      expect(pathIsInternal(`${cwd}/.codeam/preview.json`, HOME, cwd)).toBe(false);
+      expect(pathIsInternal(`${HOME}/.codeam/config.json`, HOME, cwd)).toBe(true);
+    });
+    it('a repo cloned AT home: preview.json + provision/ pass, every other ~/.codeam file stays internal', () => {
+      expect(pathIsInternal('.codeam/preview.json', HOME, HOME)).toBe(false);
+      expect(pathIsInternal(`${HOME}/.codeam/preview.json`, HOME, HOME)).toBe(false);
+      expect(pathIsInternal(`${HOME}/.codeam/provision/compose.generated.yaml`, HOME, HOME)).toBe(false);
+      expect(pathIsInternal(`${HOME}/.codeam/preview-ports.json`, HOME, HOME)).toBe(true);
+      expect(pathIsInternal(`${HOME}/.codeam/host-agent.json`, HOME, HOME)).toBe(true);
+      // The exemption is the SESSION's project, not any repo's: from another cwd, home stays internal.
+      expect(pathIsInternal(`${HOME}/.codeam/preview.json`, HOME, '/workspaces/app')).toBe(true);
+    });
     it('is not fooled by a sibling prefix (.codeam-extra)', () => {
       expect(pathIsInternal(`${HOME}/.codeam-extra/x`, HOME)).toBe(false);
     });
@@ -72,6 +111,21 @@ describe('internal-paths — CodeAgent internals guard predicates', () => {
     });
     it('flags via the title too', () => {
       expect(toolCallReferencesInternal({ title: 'Read ~/.codeam/host-agent.json' })).toBe(true);
+    });
+    it("does not flag a write of the project's .codeam/preview.json (the 2026-11-23 Antigravity block)", () => {
+      const cwd = '/home/box/workspace/pasito';
+      expect(
+        toolCallReferencesInternal(
+          {
+            title: 'File .codeam/preview.json',
+            kind: 'edit',
+            rawInput: { path: '.codeam/preview.json', content: '{"framework":"Expo"}' },
+            locations: [{ path: `${cwd}/.codeam/preview.json` }],
+          },
+          HOME,
+          cwd,
+        ),
+      ).toBe(false);
     });
     it('does not flag a normal tool call', () => {
       expect(

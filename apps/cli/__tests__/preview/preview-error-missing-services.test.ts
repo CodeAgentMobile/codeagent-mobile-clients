@@ -85,9 +85,12 @@ describe('preview_error — el fallback de variable de entorno', () => {
 
     await handlers.request_preview_detect!(makeCtx(), cmd, {} as never);
 
-    expect(lastErrorPayload().missingServices).toEqual([
-      { service: 'postgres', envVar: 'DATABASE_URL' },
-    ]);
+    // The detect runs off the dispatch loop (it reads .codeam/preview.json first): wait for it.
+    await vi.waitFor(() =>
+      expect(lastErrorPayload().missingServices).toEqual([
+        { service: 'postgres', envVar: 'DATABASE_URL' },
+      ]),
+    );
   });
 
   it('no adjunta nada cuando las dependencias SI estan servidas', async () => {
@@ -97,6 +100,7 @@ describe('preview_error — el fallback de variable de entorno', () => {
 
     await handlers.request_preview_detect!(makeCtx(), cmd, {} as never);
 
+    await vi.waitFor(() => expect(lastErrorPayload()).toBeDefined());
     expect(lastErrorPayload().missingServices).toBeUndefined();
   });
 });
