@@ -17,6 +17,8 @@ export * from './setup-deps';
 export * from './script-candidates';
 export * from './known-project';
 export * from './remix-app-server';
+export * from './missing-imports';
+export * from './bundle-health';
 export * from './prewarm-deps';
 export * from './tunnel-bringup';
 export * from './port-registry';
