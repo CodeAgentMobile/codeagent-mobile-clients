@@ -38,10 +38,10 @@ type Pkg = {
   workspaces?: unknown;
 };
 
-type RemixConfig = { kind?: unknown; template?: unknown; server?: unknown };
+type RemixConfig = { kind?: unknown; template?: unknown };
 
 /** The detect prompt's Expo shape, minus `--tunnel` (the Expo bring-up runs OUR tunnel). */
-const EXPO_DETECTION: Omit<PreviewDetection, 'notes'> = {
+const EXPO_DETECTION: PreviewDetection = {
   framework: 'Expo',
   command: 'npx',
   args: ['expo', 'start'],
@@ -135,24 +135,14 @@ function viteDetection(pkg: Pkg): PreviewDetection | null {
 }
 
 /**
- * The app's own server (`server/`, remix.json "server") is a Hono app for
- * Cloudflare Workers + D1 that the Remix platform deploys; the client reaches
- * it through `__REMIX_SERVER_BASE__`, which only the Remix players inject. The
- * Preview brings up the CLIENT; say so instead of letting calls fail silently.
+ * A Remix export. Its own server (`server/`, remix.json "server") is started beside the front by
+ * the Preview start itself (`remix-app-server.ts`), so the detection is the front's alone.
  */
-const REMIX_SERVER_NOTE =
-  "The app's server (server/) runs on Cloudflare Workers once the app is published on Remix; " +
-  "the preview doesn't start it, so screens that call it show their error state here.";
-
 function remixDetection(cwd: string, pkg: Pkg, remix: RemixConfig): KnownProjectDetection | null {
-  const hasServer =
-    (remix.server !== undefined && remix.server !== null) ||
-    fs.existsSync(path.join(cwd, 'server', 'index.ts'));
-  const notes = hasServer ? { notes: REMIX_SERVER_NOTE } : {};
   const mobile = remix.kind === 'MOBILE' || remix.template === 'expo-app' || isExpoApp(cwd, pkg);
-  if (mobile) return { kind: 'remix-mobile', detection: { ...EXPO_DETECTION, ...notes } };
+  if (mobile) return { kind: 'remix-mobile', detection: { ...EXPO_DETECTION } };
   const vite = viteDetection(pkg);
-  return vite ? { kind: 'remix-web', detection: { ...vite, ...notes } } : null;
+  return vite ? { kind: 'remix-web', detection: vite } : null;
 }
 
 /** The deterministic detection for `cwd`, or `null` when the agent should decide. */

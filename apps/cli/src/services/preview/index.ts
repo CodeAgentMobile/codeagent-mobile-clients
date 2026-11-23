@@ -16,6 +16,7 @@ export * from './run-setup';
 export * from './setup-deps';
 export * from './script-candidates';
 export * from './known-project';
+export * from './remix-app-server';
 export * from './prewarm-deps';
 export * from './tunnel-bringup';
 export * from './port-registry';
@@ -67,6 +68,11 @@ export interface ActivePreview {
    * proceso si nadie los mata.
    */
   inspector?: { close(): Promise<void> } | null;
+  /**
+   * A Remix app's own server (`wrangler dev`) and the proxy that puts it on the preview's origin
+   * (`remix-app-server.ts`, `app-server-proxy.ts`). Stopped with the preview.
+   */
+  appServer?: { process: ChildProcess; proxy: { close(): Promise<void> } | null } | null;
 }
 
 export const activePreviews = new Map<string, ActivePreview>();
@@ -159,6 +165,12 @@ export async function killPreview(sessionId: string): Promise<void> {
   } catch {
     /* nunca bloquear el apagado */
   }
+  try {
+    await preview.appServer?.proxy?.close();
+  } catch {
+    /* nunca bloquear el apagado */
+  }
+  if (preview.appServer) killProcessTree(preview.appServer.process, 'SIGTERM');
 
   // Adoptado (`devServer === null`) = no es nuestro y no se toca. Parar el
   // preview cierra el túnel y el proxy; el dev server del usuario sigue como
@@ -168,6 +180,7 @@ export async function killPreview(sessionId: string): Promise<void> {
   const sigkillTimer = setTimeout(() => {
     if (preview.devServer) killProcessTree(preview.devServer, 'SIGKILL');
     if (preview.tunnel) killProcessTree(preview.tunnel, 'SIGKILL');
+    if (preview.appServer) killProcessTree(preview.appServer.process, 'SIGKILL');
   }, 250);
   // Don't block process exit on this safety timer.
   sigkillTimer.unref?.();
