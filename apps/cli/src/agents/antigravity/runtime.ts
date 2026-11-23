@@ -46,6 +46,14 @@ import { ANTIGRAVITY_INSTALL_URL, ensureAntigravityInstalled } from './installer
 const DEFAULT_ONE_SHOT_TIMEOUT_MS = 120_000;
 /** Kill grace past agy's own `--print-timeout`, so agy normally exits on its own. */
 const ONE_SHOT_KILL_GRACE_MS = 5_000;
+/**
+ * agy's `--print-timeout` ends this much BEFORE the caller's budget. Preview
+ * detection races the one-shot against the SAME 120 s it passes as
+ * `timeoutMs`, so with `--print-timeout` equal to it agy's own timeout (which
+ * prints the partial answer and why) could never land before the caller gave
+ * up — the 2026-11-23 "agent did not answer" showed nothing of what agy did.
+ */
+const PRINT_TIMEOUT_HEADROOM_MS = 10_000;
 
 export class AntigravityRuntimeStrategy implements RuntimeStrategy {
   readonly id: AgentId = 'antigravity';
@@ -144,7 +152,9 @@ export class AntigravityRuntimeStrategy implements RuntimeStrategy {
     const binary = this.os.findInPath('agy');
     if (!binary) return null;
     const timeoutMs = opts?.timeoutMs ?? DEFAULT_ONE_SHOT_TIMEOUT_MS;
-    const printTimeoutSec = Math.max(1, Math.floor(timeoutMs / 1000));
+    const printBudgetMs =
+      timeoutMs > PRINT_TIMEOUT_HEADROOM_MS * 2 ? timeoutMs - PRINT_TIMEOUT_HEADROOM_MS : timeoutMs;
+    const printTimeoutSec = Math.max(1, Math.floor(printBudgetMs / 1000));
     const launch = this.os.buildLaunch(binary, [
       '-p',
       prompt,

@@ -120,13 +120,13 @@ describe.skipIf(process.platform === 'win32')('AntigravityRuntimeStrategy.genera
       buildLaunch: (cmd: string, args: string[]) => ({ cmd, args }),
     }) as unknown as OsStrategy;
 
-  it('runs `agy -p <prompt> --print-timeout <n>s` and returns its stdout', async () => {
+  it('runs `agy -p <prompt> --print-timeout <n>s` and returns its stdout (print timeout 10 s under the budget)', async () => {
     // Echo argv back, one arg per line, so the test sees exactly what agy got.
     const bin = fakeAgy('for a in "$@"; do echo "$a"; done');
     const out = await new AntigravityRuntimeStrategy(osWith(bin)).generateOneShot('detect it', {
       timeoutMs: 30_000,
     });
-    expect(out?.split('\n')).toEqual(['-p', 'detect it', '--print-timeout', '30s']);
+    expect(out?.split('\n')).toEqual(['-p', 'detect it', '--print-timeout', '20s']);
   });
 
   it('returns null when agy hangs (signed out, waiting for a pasted code)', async () => {
