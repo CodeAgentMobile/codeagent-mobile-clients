@@ -57,6 +57,15 @@ export interface InspectorProxyOptions {
   script: string;
   /** Host del dev server. Solo para tests; en producción es localhost. */
   targetHost?: string;
+  /**
+   * The headers the dev server sees (HTTP and websocket upgrades). Default
+   * {@link upstreamRequestHeaders}. Expo passes `devRequestHeaders`: Metro's
+   * middleware 500s a same-origin `Origin` that is not its own host.
+   */
+  upstreamHeaders?: (
+    headers: http.IncomingHttpHeaders,
+    targetPort: number,
+  ) => http.OutgoingHttpHeaders;
 }
 
 export interface InspectorProxy {
@@ -166,6 +175,7 @@ export async function startInspectorProxy(
   opts: InspectorProxyOptions,
 ): Promise<InspectorProxy> {
   const targetHost = opts.targetHost ?? '127.0.0.1';
+  const headersFor = opts.upstreamHeaders ?? upstreamRequestHeaders;
 
   /**
    * Los sockets ASCENDIDOS (websockets de recarga en caliente).
@@ -186,7 +196,7 @@ export async function startInspectorProxy(
       secFetchDest: one(req.headers['sec-fetch-dest']),
       secFetchMode: one(req.headers['sec-fetch-mode']),
     });
-    const headers = upstreamRequestHeaders(req.headers, opts.targetPort);
+    const headers = headersFor(req.headers, opts.targetPort);
 
     // ⚠️ No se puede inyectar dentro de bytes comprimidos. Se renuncia a la
     // compresión SOLO en las navegaciones; los assets —que son la mayor parte
@@ -267,7 +277,7 @@ export async function startInspectorProxy(
 
     const upstream = net.connect(opts.targetPort, targetHost, () => {
       const lines = [`${req.method} ${req.url} HTTP/1.1`];
-      for (const [k, v] of Object.entries(upstreamRequestHeaders(req.headers, opts.targetPort))) {
+      for (const [k, v] of Object.entries(headersFor(req.headers, opts.targetPort))) {
         for (const one of Array.isArray(v) ? v : [v]) {
           if (one !== undefined) lines.push(`${k}: ${one}`);
         }

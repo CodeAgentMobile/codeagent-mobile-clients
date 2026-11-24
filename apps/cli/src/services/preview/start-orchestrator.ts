@@ -38,7 +38,7 @@ import {
   type ServedAddress,
 } from './served-address';
 import type { InspectorProxy } from './inspector-proxy';
-import { startAppServerProxy, type AppServerProxy } from './app-server-proxy';
+import { devRequestHeaders, startAppServerProxy, type AppServerProxy } from './app-server-proxy';
 import * as remixServer from './remix-app-server';
 import { fetchNamedPreviewTunnel } from '../pairing.service';
 import { stopExportTunnel } from '../../scratch/export-tunnel';
@@ -626,9 +626,23 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
       return;
     }
   }
+  // The WEB build is react-native-web DOM, so the element inspector (Point mode's hover highlight +
+  // element picks, the same picker as Remix) works on it exactly as on a Vite app. It sits first,
+  // in front of the app-server proxy / Metro; Expo Go asks for manifests and bundles, never an
+  // HTML navigation, so it never sees the script. Metro 500s a same-origin `Origin` that isn't its
+  // own host, hence `devRequestHeaders`. No web build → no DOM → no inspector (QR only).
+  const inspection = web
+    ? await bringUpInspector(tunnelPort, {
+        upstreamHeaders: devRequestHeaders,
+        log: (m) => log.info('preview', m),
+      })
+    : { port: tunnelPort, proxy: null };
+  const closeInspector = (): void => void inspection.proxy?.close().catch(() => undefined);
+
   emitProgress('TUNNEL_STARTING', `cloudflared quick tunnel → Expo :${detection.port}`);
-  const pub = await bringUpPublicUrl(ctx, tunnelPort);
+  const pub = await bringUpPublicUrl(ctx, inspection.port);
   if (!pub.ok) {
+    closeInspector();
     emit(USER_EVENTS.PREVIEW_ERROR, { stage: 'tunnel', message: pub.message });
     return;
   }
@@ -645,12 +659,14 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
     // Terminal event already emitted (error, or a `preview_ready` reuse that
     // has its own tunnel) — don't leak the connector we brought up first.
     killQuiet(pub.tunnel);
+    closeInspector();
     return;
   }
 
   if (web && !(await appBuilds(ctx, detection.port))) {
     if (dev.devServer) previewSvc.killProcessTree(dev.devServer, 'SIGTERM');
     killQuiet(pub.tunnel);
+    closeInspector();
     return;
   }
 
@@ -660,8 +676,7 @@ async function runExpoBringUp(ctx: StageCtx): Promise<void> {
     url: web ? pub.url : expoGoUrl,
     expoGoUrl: web ? expoGoUrl : undefined,
     tunnel: pub.tunnel,
-    // No inspector: a DOM inspector means nothing against a native app.
-    inspector: null,
+    inspector: inspection.proxy,
   });
 }
 
@@ -1188,9 +1203,9 @@ interface TunnelUp {
   /**
    * El proxy del inspector, cuando se pudo levantar.
    *
-   * `null` significa camino directo — o porque es Expo (un inspector de DOM no
-   * significa nada contra una app nativa), o porque el proxy no arrancó y se
-   * cayó al camino de siempre. Hay que cerrarlo al parar el preview.
+   * `null` significa camino directo — o porque es Expo sin build web (solo el
+   * QR de Expo Go: no hay DOM), o porque el proxy no arrancó y se cayó al
+   * camino de siempre. Hay que cerrarlo al parar el preview.
    */
   inspector: InspectorProxy | null;
 }
@@ -1221,7 +1236,7 @@ async function establishTunnel(ctx: StageCtx, dev: DevServerUp): Promise<TunnelU
    * recibe: `cloudflared` apunta al proxy y el proxy al dev server. Si no
    * arranca, `port` es el del dev server y todo lo de abajo es byte por byte
    * lo de siempre. (Expo no pasa por aquí: su túnel se levanta ANTES del dev
-   * server, en `runExpoBringUp`, y no lleva inspector.)
+   * server, en `runExpoBringUp`, que pone el suyo cuando hay build web.)
    *
    * ⚠️ Va después de la readiness a propósito. La readiness se mide contra el
    * dev server (`ready_pattern` + la sonda TCP), nunca contra el proxy: así el
