@@ -4,6 +4,17 @@ All notable changes to the CodeAgent Mobile VS Code extension are documented her
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.58] — 2026-11-24
+
+### Added
+
+- **box:** Bake wrangler into the Box image, prefer it for the Remix app-server Preview
+
+### Fixed
+
+- **release:** Npm latest/next and the Box image tags never move backwards
+- **cli:** Lease Claude credentials from the server instead of refreshing on the box
+
 ## [2.76.57] — 2026-11-24
 
 ### Fixed
