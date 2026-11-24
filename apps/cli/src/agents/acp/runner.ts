@@ -1902,7 +1902,10 @@ export async function runAcpSession(opts: AcpRunnerOptions): Promise<void> {
       repoDirtyTimer = setTimeout(() => {
         repoDirtyTimer = null;
         log.info('acpRunner', 'onRepoDirty debounce fired — running flushTurn');
-        turnFiles.flushTurn().catch((err) => {
+        // While a turn runs this is a MID-turn flush: it reports the turn's
+        // changes so far but must not move the turn's start (the post-turn card
+        // counts the whole turn). Idle, it closes the out-of-turn edit.
+        turnFiles.flushTurn({ turnBoundary: !streaming.turns.busy }).catch((err) => {
           log.warn('acpRunner', `flushTurn from onRepoDirty failed: ${describeError(err)}`);
         });
       }, REPO_DIRTY_FLUSH_DEBOUNCE_MS);

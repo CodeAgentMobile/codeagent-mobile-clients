@@ -105,7 +105,7 @@ export async function collectRepoChangeset(
   // for a leak, and reading hundreds of files would balloon memory. This
   // bounds the payload, the memory, and the false-change spam at the source,
   // regardless of what dumped the files.
-  const MAX_CHANGESET_FILES = Math.max(1, Number(process.env.CODEAM_MAX_CHANGESET_FILES ?? 500));
+  const MAX_CHANGESET_FILES = changesetCap();
   const truncated = rows.length > MAX_CHANGESET_FILES;
   const bounded = truncated ? rows.slice(0, MAX_CHANGESET_FILES) : rows;
   if (truncated) {
@@ -163,6 +163,11 @@ export async function collectRepoChangeset(
     });
   }
   return entries;
+}
+
+/** The changeset's file cap (see `collectRepoChangeset`). */
+export function changesetCap(): number {
+  return Math.max(1, Number(process.env.CODEAM_MAX_CHANGESET_FILES ?? 500));
 }
 
 interface PorcelainRow {
@@ -266,7 +271,7 @@ function parseStatus(raw: string): PorcelainRow[] {
  * `<added>\t<removed>\t<path>\0`. Binary files render as `-\t-\t…`
  * and degrade to zero stats so the row still surfaces.
  */
-function parseNumstat(raw: string): Map<string, { added: number; removed: number }> {
+export function parseNumstat(raw: string): Map<string, { added: number; removed: number }> {
   const out = new Map<string, { added: number; removed: number }>();
   for (const record of raw.split('\0')) {
     if (!record) continue;
@@ -289,15 +294,23 @@ export const _runGitImpl = {
   run: defaultRunGit,
 };
 
-function runGit(cwd: string, args: string[]): Promise<string | null> {
-  return _runGitImpl.run(cwd, args);
+export function runGit(
+  cwd: string,
+  args: string[],
+  env?: Record<string, string>,
+): Promise<string | null> {
+  return _runGitImpl.run(cwd, args, env);
 }
 
-function defaultRunGit(cwd: string, args: string[]): Promise<string | null> {
+function defaultRunGit(
+  cwd: string,
+  args: string[],
+  env?: Record<string, string>,
+): Promise<string | null> {
   return new Promise((resolve) => {
     let proc: ReturnType<typeof spawn>;
     try {
-      proc = spawn('git', args, { cwd, env: process.env });
+      proc = spawn('git', args, { cwd, env: env ? { ...process.env, ...env } : process.env });
     } catch {
       resolve(null);
       return;
