@@ -2,7 +2,9 @@ import { randomUUID } from 'crypto';
 import { resolveApiBaseUrl, PROTOCOL_VERSION } from '@codeam/shared';
 import { _transport } from '../file-watcher/transport';
 import { log } from '../logger';
+import { diffSnapshots, snapshotWorkingTree, type TurnDelta } from './turn-delta';
 import {
+  changesetCap,
   collectRepoChangeset,
   discoverRepos,
   type ChangesetEntry,
@@ -110,6 +112,16 @@ export class TurnFileAggregator {
    */
   private lastTurnPaths: string[] = [];
 
+  /**
+   * Per repo: the working-tree snapshot at the last TURN BOUNDARY, and the one
+   * the latest flush took. The turn's delta is `turnBase → latest`; a boundary
+   * flush moves the base forward. See `turn-delta.ts` for why this exists (the
+   * card counted the session's running total on every turn).
+   * A repo with no base (snapshot failed, a leak-sized changeset) has no delta.
+   */
+  private turnBaseByRepo: Map<string, string | null> = new Map();
+  private latestTreeByRepo: Map<string, string | null> = new Map();
+
   constructor(private readonly opts: TurnFileAggregatorOptions) {
     this.apiBase = opts.apiBaseUrl ?? API_BASE;
     this.outbox = new FilesOutbox({
@@ -161,7 +173,14 @@ export class TurnFileAggregator {
    * turn. Errors are swallowed (logged) so an agent never blocks on a
    * file-changeset failure; the outbox covers the network half.
    */
-  async flushTurn(): Promise<void> {
+  /**
+   * @param opts.turnBoundary - false for a flush in the MIDDLE of a turn (the
+   *   runner's debounced on-dirty flush while a turn runs): it reports the
+   *   turn's delta so far but keeps the turn's base. Every other flush ends a
+   *   turn (default).
+   */
+  async flushTurn(opts: { turnBoundary?: boolean } = {}): Promise<void> {
+    const turnBoundary = opts.turnBoundary !== false;
     if (this.stopped) return;
     try {
       if (this.discovering) {
@@ -184,6 +203,9 @@ export class TurnFileAggregator {
 
       if (reposToScan.length === 0) {
         log.trace('turnFiles', 'dirty set empty — skipping flush');
+        // Nothing moved since the last flush — but if this one closes a turn,
+        // the tree that flush saw IS the next turn's starting point.
+        if (turnBoundary) this.advanceTurnBase();
         return;
       }
 
@@ -191,7 +213,10 @@ export class TurnFileAggregator {
       for (const repo of reposToScan) {
         const entries = await collectRepoChangeset(repo);
         if (entries) files.push(...entries);
+        await this.snapshotRepo(repo, entries);
       }
+      const turn = this.isBaselineFlush() ? undefined : await this.turnDelta();
+      if (turnBoundary || !this.baselineCaptured) this.advanceTurnBase();
 
       // FIRST flush after construction — stash the current dirty
       // state as the pre-pair baseline and skip the POST. The rail
@@ -240,12 +265,52 @@ export class TurnFileAggregator {
           pluginId: this.opts.pluginId,
           enqueuedAt: Date.now(),
           files: chunk,
+          ...(turn ? { turn } : {}),
         };
         await this.outbox.enqueue(entry);
       }
     } catch (err) {
       log.warn('turnFiles', `flushTurn failed: ${(err as Error).message ?? String(err)}`);
     }
+  }
+
+  private isBaselineFlush(): boolean {
+    return !this.baselineCaptured;
+  }
+
+  /** Snapshot one repo's working tree; a failure or a leak-sized changeset = no delta. */
+  private async snapshotRepo(repo: RepoDescriptor, entries: ChangesetEntry[] | null): Promise<void> {
+    const tree =
+      entries && entries.length < changesetCap()
+        ? await snapshotWorkingTree(
+            repo.repoRoot,
+            entries.map((e) => e.filePath),
+          ).catch(() => null)
+        : null;
+    this.latestTreeByRepo.set(repo.repoRoot, tree);
+  }
+
+  private advanceTurnBase(): void {
+    for (const [root, tree] of this.latestTreeByRepo) this.turnBaseByRepo.set(root, tree);
+  }
+
+  /**
+   * The turn's delta across every repo snapshotted so far — a repo the
+   * mid-turn flush already scanned is not dirty again at the turn's end, but
+   * its edits are still this turn's. Undefined when any repo's is unknown.
+   */
+  private async turnDelta(): Promise<TurnDelta | undefined> {
+    const total: TurnDelta = { files: 0, added: 0, removed: 0 };
+    for (const [root, latest] of this.latestTreeByRepo) {
+      const base = this.turnBaseByRepo.get(root);
+      if (!base || !latest) return undefined;
+      const d = await diffSnapshots(root, base, latest).catch(() => null);
+      if (!d) return undefined;
+      total.files += d.files;
+      total.added += d.added;
+      total.removed += d.removed;
+    }
+    return total;
   }
 
   /**
@@ -275,6 +340,7 @@ export class TurnFileAggregator {
       turnId: entry.turnId,
       agentId: this.opts.agentId,
       files: entry.files,
+      ...(entry.turn ? { turn: entry.turn } : {}),
     });
     try {
       const res = await _transport.post(url, headers, body);

@@ -1,3 +1,4 @@
+import type { TurnDelta } from './turn-delta';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -19,6 +20,8 @@ export interface OutboxEntry {
   /** First-attempt time, used for stale-purge. */
   enqueuedAt: number;
   files: ChangesetEntry[];
+  /** What THIS turn changed (see `turn-delta.ts`). Absent when unknown. */
+  turn?: TurnDelta;
 }
 
 const HOME_OUTBOX_DIR = '.codeam/outbox';
