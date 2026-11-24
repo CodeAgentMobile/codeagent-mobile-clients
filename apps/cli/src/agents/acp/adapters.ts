@@ -35,6 +35,8 @@ import {
 import { ensureKimiInstalled, augmentKimiPath } from '../kimi/installer';
 import { ensureOpencodeInstalled, augmentOpencodePath } from '../opencode/installer';
 import { ensureAntigravityInstalled } from '../antigravity/installer';
+import { antigravityModeSubstitutes } from '../antigravity/terminal-sandbox';
+import type { ModeSubstitute } from './modes';
 import { isLocalSession } from '../../baton/gate';
 
 // CommonJS module — `require` is already in scope. Aliased so we
@@ -73,6 +75,12 @@ export interface AdapterSpec {
    * fails the prompt on the first match instead of waiting out the idle window.
    */
   fatalTurnStderr?: RegExp;
+  /**
+   * Advertised agent modes this host cannot run natively, keyed by mode id
+   * (Antigravity's `auto` where its terminal sandbox cannot start, see
+   * `antigravity/terminal-sandbox.ts`). Undefined when every mode works.
+   */
+  modeSubstitutes?: Readonly<Record<string, ModeSubstitute>>;
 }
 
 /**
@@ -306,10 +314,16 @@ const REGISTRY: Partial<Record<AgentId, () => AdapterSpec | null>> = {
   // agy sends normal `session/request_permission` requests and OUR runner
   // answers them (auto-approve on codespace/self-hosted, the mobile prompt on a
   // local pair; see `permission-gate.ts`), exactly as for every other agent.
+  //
+  // ⚠️ `auto` runs commands in agy's terminal sandbox, which cannot start in a
+  // container without user namespaces (codespaces, the Box): every command
+  // failed "fork/exec /usr/local/bin/agy: operation not permitted". There
+  // `modeSubstitutes` runs `auto` as agy `default` + our auto-approve.
   antigravity: () => ({
     command: 'agy',
     args: ['acp'],
     requiresAgentBinary: 'agy',
+    modeSubstitutes: antigravityModeSubstitutes(),
     waitForBinary: async (o) => {
       if (isLocalSession()) await ensureAntigravityInstalled();
       // install.sh drops agy in ~/.local/bin — fold it into a stale PATH (an

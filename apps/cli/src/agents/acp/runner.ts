@@ -369,6 +369,15 @@ export class StreamingState {
   private lastTextMessageId: string | null = null;
 
   /**
+   * A tool call (tool_use / tool_result) arrived since the last text delta.
+   * The text after it is a new message even when the adapter sends no message
+   * ids (Antigravity: every chunk shares one id, see
+   * `NO_MESSAGE_ID` in mappers.ts) — so "Checking the files." → tool →
+   * "Found it." still starts a new paragraph.
+   */
+  private toolSinceLastText = false;
+
+  /**
    * Stable chunkId that ALL `thinking` segments of the current turn collapse
    * onto (set to the first thought chunk's id, reset each {@link beginTurn}) —
    * the thinking twin of {@link turnTextChunkId}.
@@ -579,6 +588,7 @@ export class StreamingState {
     this.streamingChunks.clear();
     this.turnTextChunkId = null;
     this.lastTextMessageId = null;
+    this.toolSinceLastText = false;
     this.turnThoughtChunkId = null;
     // New turn → new namespace, so a reused adapter chunkId (e.g. `toolu_01`)
     // never collides with a prior turn's already-finalized chunk on the feed.
@@ -661,12 +671,16 @@ export class StreamingState {
       // the same reply reconciles as REPLACE and is left alone) starts a new
       // paragraph — never glue it onto the previous message's last byte.
       const newMessage =
-        this.lastTextMessageId !== null && this.lastTextMessageId !== delta.chunkId;
+        this.lastTextMessageId !== null &&
+        (this.lastTextMessageId !== delta.chunkId || this.toolSinceLastText);
       const appended = cumulativeContent === prior + delta.delta;
       if (newMessage && appended && /\S$/.test(prior) && !/^\s/.test(delta.delta)) {
         cumulativeContent = `${prior}\n\n${delta.delta}`;
       }
       this.lastTextMessageId = delta.chunkId;
+      this.toolSinceLastText = false;
+    } else if (delta.kind === 'tool_use' || delta.kind === 'tool_result') {
+      this.toolSinceLastText = true;
     }
     this.streamingChunks.set(chunkId, { kind: delta.kind, content: cumulativeContent });
 
