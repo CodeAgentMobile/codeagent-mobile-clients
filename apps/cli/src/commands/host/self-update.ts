@@ -92,6 +92,23 @@ export const SELF_UPDATE_BOOT_QUIET_MS = 10 * 60_000;
  */
 export const SELF_UPDATE_DEFER_MAX_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * `cli_release` (pushed by the backend the moment the release workflow promotes a
+ * version to npm `latest`): the host-agent runs its self-update after a random delay
+ * in `[0, spreadMs)` so a fleet doesn't hit npm in the same second. The backend sends
+ * 120 s; this caps whatever arrives.
+ */
+export const CLI_RELEASE_MAX_SPREAD_MS = 10 * 60_000;
+
+/**
+ * npm's read replicas can still answer the previous `latest` for a minute or two
+ * after the promotion (the workflow only proves ONE replica moved). When the
+ * announced version isn't installed after a check, try again this much later, up
+ * to {@link CLI_RELEASE_LAG_RETRIES} times; past that the hourly check takes over.
+ */
+export const CLI_RELEASE_LAG_RETRY_MS = 60_000;
+export const CLI_RELEASE_LAG_RETRIES = 3;
+
 /** Timeout for the `npm view <pkg> version` registry lookup. */
 const SELF_UPDATE_VIEW_TIMEOUT_MS = 30_000;
 
