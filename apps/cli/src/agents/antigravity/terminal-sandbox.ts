@@ -65,11 +65,6 @@ function probe(): boolean {
   );
 }
 
-/** Test seam: forget the cached probe result. */
-export function resetAgyTerminalSandboxProbe(): void {
-  cached = undefined;
-}
-
 /**
  * The agy modes this host cannot run natively. Empty when the sandbox works.
  */
