@@ -430,6 +430,13 @@ self-isolate — every hard-isolation invariant above is applied by the CALLER (
 never by anything baked into the image. Runtime env contract: `CODEAM_ENROLL_TOKEN` / `CODEAM_API_URL`
 (required, both `-e`) + optional `REPO_URL`/`GIT_TOKEN` (private-repo clone, same env-not-argv rule).
 
+**wrangler, baked (2026-11-24).** The Remix app-server Preview (`services/preview/remix-app-server.ts`)
+runs `wrangler dev`; the image bakes wrangler at `ARG WRANGLER_VERSION` into
+`/opt/codeam/tools/wrangler-<version>` (`BAKED_TOOLS_DIR`), which `wranglerBinary` prefers over the
+~100 MB first-use download into `~/.codeam/tools`. The ARG must equal `WRANGLER_VERSION_NODE22`
+(`__tests__/box/wrangler-version-pin.test.ts`); bump both together. A CLI whose pin moved past the
+image's falls back to the download. Codespaces get it through the same image (wrapper devcontainer).
+
 **Beads version + schema (2026-10-21 incident).** The image's global `bd` is EXACT-pinned
 (`ARG BEADS_BD_VERSION`) to the CLI's `@beads/bd` optional-dependency pin, and
 `__tests__/beads/bd-version-pin.test.ts` fails if they differ — bump both together. The image

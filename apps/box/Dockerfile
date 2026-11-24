@@ -377,6 +377,23 @@ RUN npm_config_cache=/tmp/npm-build-cache npm install -g expo \
     && echo "expo: OK $(expo --version)" \
     || echo "expo: MISS (the first Expo preview downloads it)"
 
+# ── wrangler, baked for the Remix app-server Preview (owner 2026-11-24) ────
+# A Remix project with a server previews under `wrangler dev` (workerd + a local D1). The CLI
+# installed wrangler into ~/.codeam/tools on first use, so the first Preview with a server
+# downloaded ~100 MB on the user's critical path. Baked here at EXACTLY the CLI's pin
+# (`WRANGLER_VERSION_NODE22` in apps/cli/src/services/preview/remix-app-server.ts — guarded by
+# __tests__/box/wrangler-version-pin.test.ts; bump both together) into `BAKED_TOOLS_DIR`
+# (/opt/codeam/tools/wrangler-<version>, the same layout as ~/.codeam/tools), which the CLI
+# prefers over a download. /opt, not /home/box: the runtime home volume would shadow it.
+# Root-owned 0755: wrangler never writes into its own install (state lives in the project's
+# .wrangler/), and a CLI whose pin moved on just installs its own version as before.
+# Its own npm cache, like Expo's above: a root entry in /opt/npm-cache breaks the box's npm.
+ARG WRANGLER_VERSION=4.158.0
+RUN npm_config_cache=/tmp/npm-build-cache npm install --no-save --no-audit --no-fund \
+        --prefix "/opt/codeam/tools/wrangler-${WRANGLER_VERSION}" "wrangler@${WRANGLER_VERSION}" \
+    && rm -rf /tmp/npm-build-cache /root/.config/.wrangler \
+    && echo "wrangler: $("/opt/codeam/tools/wrangler-${WRANGLER_VERSION}/node_modules/.bin/wrangler" --version)"
+
 # The box's npm cache belongs to the box, every entry of it — the build fails otherwise (above).
 RUN test -z "$(find /opt/npm-cache ! -user box -print -quit)"
 
