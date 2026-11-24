@@ -3414,6 +3414,91 @@ describe('HostAgentSupervisor — fleet control plane', () => {
     expect(calls.some((c) => c[0] === 'create')).toBe(false);
   });
 
+  // The review/canary boxes are never slept, so the sleeping-only migration
+  // never reached them: on 2026-11-24 fleet-1 still ran them on the 2.76.11 /
+  // 2.76.36 / 2.76.44 images (the 2.76.11 one has no tini — 122 zombies). The
+  // backend sends `restartIfIdle` for exactly those; the host recreates one only
+  // between turns.
+  function makeRunningDocker(turnsStdout: string, execCode = 0) {
+    const base = makeMigrateDocker({
+      running: 'true',
+      containerImageId: 'sha256:old',
+      latestImageId: 'sha256:new',
+    });
+    const inner = base.docker.run;
+    base.docker.run = vi.fn(async (args: string[], opts?: never) => {
+      if (args[0] === 'exec') {
+        base.calls.push(args);
+        return { code: execCode, stdout: turnsStdout, stderr: '' };
+      }
+      return inner(args, opts);
+    });
+    return base;
+  }
+
+  it('restartIfIdle: recreates an IDLE running box with `run` (same volume, no token, no inline pull)', async () => {
+    const { docker, calls } = makeRunningDocker('');
+    const sup = new HostAgentSupervisor(IDENTITY, { docker });
+    await sup.handleCommand({
+      id: 'c2a',
+      type: 'fleet_migrate_box_image',
+      payload: { ...migratePayload, restartIfIdle: true },
+    } as never);
+
+    const exec = calls.find((c) => c[0] === 'exec');
+    expect(exec?.slice(0, 2)).toEqual(['exec', migratePayload.containerName]);
+    // The idle probe runs AFTER the pull, right before the rm.
+    const order = calls.map((c) => c[0]);
+    expect(order.indexOf('pull')).toBeLessThan(order.indexOf('exec'));
+    expect(order.indexOf('exec')).toBeLessThan(order.indexOf('rm'));
+
+    const rm = calls.find((c) => c[0] === 'rm');
+    expect(rm).not.toContain('-v');
+    const run = calls.find((c) => c[0] === 'run');
+    expect(run).toBeDefined();
+    expect(run).not.toContain('--pull=always');
+    expect(run).toContain(`${migratePayload.containerName}:/home/box`);
+    expect(calls.some((c) => c[0] === 'create')).toBe(false);
+  });
+
+  it('restartIfIdle: leaves a box with a live turn alone', async () => {
+    const { docker, calls } = makeRunningDocker('4242\n');
+    const sup = new HostAgentSupervisor(IDENTITY, { docker });
+    await sup.handleCommand({
+      id: 'c2b',
+      type: 'fleet_migrate_box_image',
+      payload: { ...migratePayload, restartIfIdle: true },
+    } as never);
+    expect(calls.some((c) => c[0] === 'rm')).toBe(false);
+    expect(calls.some((c) => c[0] === 'run')).toBe(false);
+  });
+
+  it('restartIfIdle: a failed idle probe is NOT read as idle', async () => {
+    const { docker, calls } = makeRunningDocker('', 126);
+    const sup = new HostAgentSupervisor(IDENTITY, { docker });
+    await sup.handleCommand({
+      id: 'c2c',
+      type: 'fleet_migrate_box_image',
+      payload: { ...migratePayload, restartIfIdle: true },
+    } as never);
+    expect(calls.some((c) => c[0] === 'rm')).toBe(false);
+  });
+
+  it('restartIfIdle on a running box already on :latest: no probe, no churn', async () => {
+    const { docker, calls } = makeMigrateDocker({
+      running: 'true',
+      containerImageId: 'sha256:same',
+      latestImageId: 'sha256:same',
+    });
+    const sup = new HostAgentSupervisor(IDENTITY, { docker });
+    await sup.handleCommand({
+      id: 'c2d',
+      type: 'fleet_migrate_box_image',
+      payload: { ...migratePayload, restartIfIdle: true },
+    } as never);
+    expect(calls.some((c) => c[0] === 'exec' || c[0] === 'rm' || c[0] === 'run')).toBe(false);
+  });
+
   it('skips a box already on :latest — idempotent, no churn', async () => {
     const { docker, calls } = makeMigrateDocker({
       running: 'false',
