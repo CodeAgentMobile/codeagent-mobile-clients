@@ -44,6 +44,16 @@ export const LOCAL_SERVER_PREFIX = `/_v/${LOCAL_VERSION_ID}`;
 export const WRANGLER_VERSION_NODE22 = '4.158.0';
 export const WRANGLER_VERSION_NODE20 = '4.85.0';
 
+/**
+ * Where the CodeAgent Box image bakes wrangler (`ARG WRANGLER_VERSION` in apps/box/Dockerfile,
+ * which must equal {@link WRANGLER_VERSION_NODE22} — guarded by
+ * __tests__/box/wrangler-version-pin.test.ts). Same `wrangler-<version>` layout as
+ * `~/.codeam/tools`, so a CLI whose pin moved past the image's simply doesn't find it and installs
+ * its own. Outside `/home/box` on purpose: the Box's home volume would shadow a baked home dir.
+ * Codespaces boot the same image (wrapper-repo devcontainer), so they get it too.
+ */
+export const BAKED_TOOLS_DIR = '/opt/codeam/tools';
+
 export interface RemixServerDecl {
   db: boolean;
   rooms: boolean;
@@ -175,14 +185,20 @@ export function wranglerVersionFor(nodeVersion: string = process.versions.node):
   return Number(nodeVersion.split('.')[0]) >= 22 ? WRANGLER_VERSION_NODE22 : WRANGLER_VERSION_NODE20;
 }
 
-/** The wrangler binary to run: the project's own when it has one, else our pinned tool install. */
+/**
+ * The wrangler binary to run: the project's own when it has one, else the one baked into the
+ * image at our pinned version, else our pinned tool install (downloaded on first use, ~100 MB).
+ */
 export function wranglerBinary(
   cwd: string,
   home: string = os.homedir(),
   version: string = wranglerVersionFor(),
+  bakedRoot: string = BAKED_TOOLS_DIR,
 ): { bin: string; installPrefix: string | null } {
   const own = path.join(cwd, 'node_modules', '.bin', 'wrangler');
   if (fs.existsSync(own)) return { bin: own, installPrefix: null };
+  const baked = path.join(bakedRoot, `wrangler-${version}`, 'node_modules', '.bin', 'wrangler');
+  if (fs.existsSync(baked)) return { bin: baked, installPrefix: null };
   const prefix = path.join(home, '.codeam', 'tools', `wrangler-${version}`);
   const bin = path.join(prefix, 'node_modules', '.bin', 'wrangler');
   return { bin, installPrefix: fs.existsSync(bin) ? null : prefix };

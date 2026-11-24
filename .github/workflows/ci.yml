@@ -260,6 +260,11 @@ jobs:
           docker run --rm --entrypoint sh codeam-box-fleet-e2e:ci \
             -c 'php -v && composer --version && php -m | grep -qx mbstring'
 
+          # The Remix app-server Preview runs the image-baked wrangler as `box`
+          # (BAKED_TOOLS_DIR, apps/cli/src/services/preview/remix-app-server.ts).
+          docker run --rm --entrypoint sh codeam-box-fleet-e2e:ci \
+            -c 'ls /opt/codeam/tools/wrangler-*/node_modules/.bin/wrangler && /opt/codeam/tools/wrangler-*/node_modules/.bin/wrangler --version'
+
           npx vitest run fleet-box.int
 
       # ── Session Baton REAL gate — provisioning ───────────────────────────

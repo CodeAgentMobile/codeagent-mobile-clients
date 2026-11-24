@@ -129,10 +129,27 @@ describe('wrangler config — the platform bindings (remix-cloudflare.ts)', () =
     expect(wranglerVersionFor('22.3.0')).toBe('4.158.0');
     expect(wranglerVersionFor('20.18.0')).toBe('4.85.0');
     const home = path.join(dir, 'home');
-    const tool = wranglerBinary(dir, home, '4.158.0');
+    const baked = path.join(dir, 'baked');
+    const tool = wranglerBinary(dir, home, '4.158.0', baked);
     expect(tool.installPrefix).toBe(path.join(home, '.codeam', 'tools', 'wrangler-4.158.0'));
     write('node_modules/.bin/wrangler', '#!/bin/sh');
     expect(wranglerBinary(dir, home)).toEqual({ bin: path.join(dir, 'node_modules', '.bin', 'wrangler'), installPrefix: null });
+  });
+  it('wrangler: the image-baked binary at the pinned version wins over a download', () => {
+    const home = path.join(dir, 'home');
+    const baked = path.join(dir, 'baked');
+    write('baked/wrangler-4.158.0/node_modules/.bin/wrangler', '#!/bin/sh');
+    expect(wranglerBinary(dir, home, '4.158.0', baked)).toEqual({
+      bin: path.join(baked, 'wrangler-4.158.0', 'node_modules', '.bin', 'wrangler'),
+      installPrefix: null,
+    });
+    // A CLI pinned to another version doesn't run the image's: it installs its own.
+    expect(wranglerBinary(dir, home, '4.85.0', baked).installPrefix).toBe(
+      path.join(home, '.codeam', 'tools', 'wrangler-4.85.0'),
+    );
+    // The project's own wrangler still comes first.
+    write('node_modules/.bin/wrangler', '#!/bin/sh');
+    expect(wranglerBinary(dir, home, '4.158.0', baked).bin).toBe(path.join(dir, 'node_modules', '.bin', 'wrangler'));
   });
 });
 
