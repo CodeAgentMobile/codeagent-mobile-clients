@@ -4,6 +4,16 @@ All notable changes to the CodeAgent Mobile VS Code extension are documented her
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.76.54] — 2026-11-24
+
+### Changed
+
+- **cli:** Drop the unused sandbox probe reset seam
+
+### Fixed
+
+- **cli:** Agy commands run in containers, and agy replies render as one message
+
 ## [2.76.53] — 2026-11-24
 
 ### Fixed
