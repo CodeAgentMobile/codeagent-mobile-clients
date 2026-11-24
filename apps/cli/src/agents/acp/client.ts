@@ -807,6 +807,7 @@ export class AcpClient {
       // axis than models. Sets availableModes + currentModeId (empty/undefined
       // when the agent advertises no modes — NO hardcoded fallback).
       this.captureModes(newSession.modes ?? null);
+      await this.applyModeSubstitute(newSession.sessionId);
       // `currentServiceTier` is a legacy non-standard codex-acp field surfaced
       // only in the welcome banner — not part of the native model contract.
       // ⚠️ VALIDATE, don't trust the cast. Adapters have been observed sending
@@ -1191,6 +1192,7 @@ export class AcpClient {
     // brand-new SessionModeState, NOT a clone of the initial session's.
     this.captureModelConfig(ns.configOptions ?? []);
     this.captureModes(ns.modes ?? null);
+    await this.applyModeSubstitute(ns.sessionId);
     // ⚠️ A fresh `session/new` starts in the agent's DEFAULT (ask-per-tool) mode
     // — it does NOT inherit the initial session's `INITIAL_AGENT_MODE=agent-full-
     // access` env (that env is applied by the agent only to its first session).
@@ -1381,7 +1383,10 @@ export class AcpClient {
     // Re-capture the native session modes too — the resumed conversation may sit
     // on a different mode than the one at spawn (`loadSession` returns the same
     // `modes` shape as `newSession`).
-    if (loaded?.modes !== undefined) this.captureModes(loaded.modes ?? null);
+    if (loaded?.modes !== undefined) {
+      this.captureModes(loaded.modes ?? null);
+      await this.applyModeSubstitute(sessionId);
+    }
     log.info('acpClient', `loadSession ← ok sessionId=${sessionId.slice(0, 8)}`);
   }
 
@@ -1635,11 +1640,17 @@ export class AcpClient {
     if (this.availableModes.length === 0) {
       throw new Error('mode selection not available: this agent advertises no ACP session modes');
     }
-    log.info('acpClient', `setMode → ${modeId}`);
+    // A mode this host can't run natively goes to the agent as its substitute;
+    // the picker keeps showing the mode the user chose.
+    const agentModeId = this.opts.adapter.modeSubstitutes?.[modeId]?.agentModeId ?? modeId;
+    log.info(
+      'acpClient',
+      `setMode → ${modeId}${agentModeId !== modeId ? ` (agent mode ${agentModeId})` : ''}`,
+    );
     // Typed native RPC (`session/set_mode`) — request is `{ sessionId, modeId }`.
     await this.connection.setSessionMode({
       sessionId: this.sessionId,
-      modeId,
+      modeId: agentModeId,
     });
     // Track the in-use mode so a subsequent list_modes reports it as current.
     this.currentModeId = modeId;
@@ -1654,6 +1665,35 @@ export class AcpClient {
    */
   getAvailableModes(): AgentMode[] {
     return this.availableModes;
+  }
+
+  /**
+   * True when the CLI itself must approve every permission request in this
+   * mode: a full-bypass mode, or a substituted mode whose agent-side stand-in
+   * asks (see {@link AdapterSpec.modeSubstitutes}).
+   */
+  modeAutoApproves(modeId: string): boolean {
+    return (
+      modeIsFullAutoApprove(modeId) || this.opts.adapter.modeSubstitutes?.[modeId]?.autoApprove === true
+    );
+  }
+
+  /**
+   * A session the agent created or restored in a mode this host can't run
+   * (agy reloads a conversation in the mode it was saved in) is moved to the
+   * substitute, and keeps reporting the chosen mode. Best-effort.
+   */
+  private async applyModeSubstitute(sessionId: string): Promise<void> {
+    const current = this.currentModeId;
+    const sub = current ? this.opts.adapter.modeSubstitutes?.[current] : undefined;
+    if (!sub || !this.connection) return;
+    try {
+      await this.connection.setSessionMode({ sessionId, modeId: sub.agentModeId });
+      log.info('acpClient', `mode ${current} runs as agent mode ${sub.agentModeId} on this host`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn('acpClient', `could not apply the ${current} mode substitute: ${msg}`);
+    }
   }
 
   /** The native current mode id (or undefined if the agent advertises no modes). */
@@ -1674,10 +1714,11 @@ export class AcpClient {
       return;
     }
     this.currentModeId = modes.currentModeId;
+    const subs = this.opts.adapter.modeSubstitutes;
     this.availableModes = (modes.availableModes ?? []).map((mode) => ({
       id: mode.id,
       label: mode.name,
-      description: mode.description ?? undefined,
+      description: subs?.[mode.id]?.description ?? mode.description ?? undefined,
     }));
   }
 

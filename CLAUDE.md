@@ -198,6 +198,11 @@ Tests live next to the modules in `packages/shared/__tests__/` and run via `(cd 
 
 JetBrains plugin is Kotlin and does **not** consume the shared package — if the same logic ever needs to exist there, port it deliberately and annotate the port.
 
+### Antigravity (`agy acp`) quirks
+
+- **`auto` mode needs agy's terminal sandbox** (a user-namespace re-exec of agy on Linux). A container that blocks unprivileged user namespaces (GitHub Codespaces, the Box with `--cap-drop ALL`) refuses it, and every command fails `Command failed to run: fork/exec /usr/local/bin/agy: operation not permitted`. `agy acp` still advertises and accepts `auto` (its own `-p --mode auto` refuses it), and `enableTerminalSandbox:false` in settings.json does not change it. `agents/antigravity/terminal-sandbox.ts` probes `unshare --user --map-root-user true` once; where it fails, the adapter's `modeSubstitutes` runs `auto` as agy `default` (asks, then runs the command outside the sandbox) and `AcpClient.modeAutoApproves` makes the CLI approve, so every command still goes through our permission gate (internal-path guard, guardrails). A session agy restores in `auto` is moved to `default` too. (2026-11-24)
+- **agy sends `agent_message_chunk` without `messageId`.** Those chunks share `NO_MESSAGE_ID` (`mappers.ts`); a UUID per chunk read as a new message each time, and the runner's new-message paragraph break split the reply mid-word and inside inline code, and the API lifted the orphaned path lines into "read" file cards. The message boundary of an id-less agent is the tool call between two texts (`StreamingState.toolSinceLastText`). Only the Claude and Codex adapters are known to send it. (2026-11-24)
+
 ### PTY handling (CLI)
 
 `apps/cli/src/services/claude.service.ts` spawns Claude Code inside a Python PTY helper so Claude sees `stdin.isTTY === true` even when the CLI itself was launched from a non-TTY context. On Windows or when Python is unavailable it falls back to direct spawn.

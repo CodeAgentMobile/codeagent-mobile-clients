@@ -1678,7 +1678,9 @@ async function setModeH(ctx: AcpCommandContext): Promise<void> {
     // full-bypass mode keeps auto-approve; every ask-mode flips it false so the
     // agent's permission prompts RELAY to mobile. A headless session never sends
     // set_mode, so it stays auto.
-    opts.autoApprovePermissions = modeIsFullAutoApprove(modeId);
+    // A substituted mode (agy `auto` without its terminal sandbox) runs on an
+    // agent mode that asks, so the CLI approves in its place.
+    opts.autoApprovePermissions = client.modeAutoApproves(modeId);
     log.info(
       'acpRunner',
       `set_mode → ${modeId} (autoApprovePermissions=${opts.autoApprovePermissions})`,

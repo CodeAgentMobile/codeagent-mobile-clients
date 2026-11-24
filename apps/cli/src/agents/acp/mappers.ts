@@ -294,15 +294,27 @@ export function mapPermissionRequest(
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 /**
+ * The chunkId of every message chunk an agent sends WITHOUT a `messageId`
+ * (Antigravity omits it; the Claude and Codex adapters send one).
+ */
+export const NO_MESSAGE_ID = 'acp-message';
+
+/**
  * ACP messages carry an optional `messageId` so chunks belonging to
- * the same agent turn cluster together. When present, we use it as
- * the chunkId so the backend can splice multiple text deltas into
- * one mobile bubble; when absent, we generate a fresh UUID per
- * chunk (each becomes its own bubble — degraded but correct).
+ * the same agent message cluster together. When present, it is the chunkId.
+ * When absent, every chunk gets the same {@link NO_MESSAGE_ID}: they are the
+ * continuation of one stream, NOT one message each.
+ *
+ * ⚠️ It used to be a fresh UUID per chunk. The runner reads a changed id as a
+ * new message and starts a new paragraph, so an agent without message ids got
+ * a paragraph break at every chunk boundary — mid-word ("confirm" / "ados")
+ * and inside inline code, whose orphaned path lines the API then lifted into
+ * "read" file cards (Antigravity, 2026-11-24). The runner finds the message
+ * boundary of these agents at the tool call between them instead.
  */
 function messageChunkId(messageId: string | null | undefined): string {
   if (typeof messageId === 'string' && messageId.length > 0) return messageId;
-  return randomUUID();
+  return NO_MESSAGE_ID;
 }
 
 /**

@@ -99,3 +99,58 @@ describe('ACP text — a new message after a finished sentence is a new paragrap
     expect(text).toBe('v1.2.Final');
   });
 });
+
+/**
+ * Antigravity (agy) sends `agent_message_chunk` WITHOUT a `messageId`. The
+ * mapper used to mint a UUID per chunk, so every chunk read as a new message
+ * and got a paragraph break: "confirm" / "ados", "`feat: text-to" / "-speech",
+ * and orphaned path lines ("durand/pasito.git`") the API lifted into "read"
+ * file cards (owner's codespace, 2026-11-24). The exact delta sequence from
+ * that turn's CLI log must render as ONE markdown message, byte-for-byte.
+ */
+describe('ACP text — an agent without message ids streams one message', () => {
+  const AGY_DELTAS = [
+    'Los cambios ya fueron confirm',
+    'ados y subidos a `main`:\n\n- **Commit:** `c256c30` (`feat: text-to',
+    '-speech, resumen de habitos y suite de pruebas`)\n- **Repositorio:** `https://github.com/edgar-',
+    'durand/pasito.git`\n- **Archivos actualizados:**\n  - `src/utils/speech.ts` (',
+    'Text-to-Speech)\n  - `src/components/TaskCard.tsx` (Botón de audio por',
+    ' tarea)\n  - `src/screens/parent/ParentHome.tsx` (Métricas de hábitos)\n  ',
+    '- `src/theme.ts` (Estilo `bodyBold`)\n  - `scripts/test-smoke',
+    '.js` y `package.json` (Script de pruebas)',
+  ];
+
+  it('the 2026-11-24 agy reply is the plain concatenation of its deltas', async () => {
+    const { state, lastText } = makeState();
+    const text = await runTurn(
+      state,
+      AGY_DELTAS.map((d) => messageChunk(null, d)),
+    );
+    expect(text).toBe(AGY_DELTAS.join(''));
+    expect(lastText()).toBe(AGY_DELTAS.join(''));
+    expect(text).not.toContain('confirm\n\nados');
+    expect(text).toContain('`https://github.com/edgar-durand/pasito.git`');
+  });
+
+  it('an absent messageId (undefined, not null) is the same single stream', async () => {
+    const { state } = makeState();
+    const note = (text: string) =>
+      ({
+        sessionId: 'sess-1',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+      }) as unknown as Parameters<typeof mapSessionUpdate>[0];
+    const text = await runTurn(state, [note('Los cambios ya fueron confirm'), note('ados.')]);
+    expect(text).toBe('Los cambios ya fueron confirmados.');
+  });
+
+  it('text after a tool call is still a new paragraph without message ids', async () => {
+    const { state } = makeState();
+    const text = await runTurn(state, [
+      messageChunk(null, 'Checking the '),
+      messageChunk(null, 'files.'),
+      toolCall('call_104'),
+      messageChunk(null, 'Found it.'),
+    ]);
+    expect(text).toBe('Checking the files.\n\nFound it.');
+  });
+});
