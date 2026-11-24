@@ -1009,6 +1009,12 @@ export interface AcpRunnerOptions {
    *  (built by {@link buildMcpServersForStart} in the composition root).
    *  Omitted/empty when there's no manifest or nothing to inject. */
   mcpServers?: McpServer[];
+  /** Called when an in-session switch (or squad route) moves the session onto
+   *  a new runtime agent. The composition root uses it to start the Claude
+   *  credential-sync watcher: a switched-to Claude rotates the vaulted
+   *  refresh_token on this box, and without the write-back the vault keeps the
+   *  spent one (next switch/deploy → `invalid_grant` → forced re-link). */
+  onAgentRuntime?: (agent: AgentId) => void;
 }
 
 /** Auto-cancel a permission Promise after this ms. Matches the
@@ -2071,6 +2077,9 @@ export async function runAcpSession(opts: AcpRunnerOptions): Promise<void> {
     // stop() suppresses onUnexpectedExit for its own kill — without that the
     // swap's teardown would process.exit(1) the whole session.
     await client.stop();
+    // The house/managed rail runs claude on OUR proxy token, not the user's
+    // OAuth login — nothing of theirs to write back.
+    if (!swapOpts.house) opts.onAgentRuntime?.(nextAgent);
     const adapter = await resolveAcpAdapterWithRetry(nextAgent);
     if (!adapter) throw new Error(`no ACP adapter available for ${nextAgent}`);
     const disable1m =

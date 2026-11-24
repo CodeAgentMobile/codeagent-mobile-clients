@@ -292,15 +292,23 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
   // user who has a working session but no LinkedAgent ("No LinkedAgent for
   // claude_code"). The backend guards it (auto-create if missing, never clobber a
   // durable non-rotating setup-token), so it's safe to run on any session shape.
-  const claudeCredentialSync =
-    session.agent === 'claude' && session.pluginAuthToken
-      ? startClaudeCredentialSync({
-          sessionId: session.id,
-          pluginId,
-          pluginAuthToken: session.pluginAuthToken,
-          pollSecret: session.pollSecret,
-        })
-      : null;
+  //
+  // ⚠️ Also started when a session SWITCHES to Claude (`onAgentRuntime` below):
+  // a switched-to Claude rotates the vaulted refresh_token on the box exactly
+  // like a deployed one, and without this watcher the vault kept the spent
+  // token → the next switch/deploy got `invalid_grant` → "re-link" (owner,
+  // 2026-11-24).
+  let claudeCredentialSync: ReturnType<typeof startClaudeCredentialSync> | null = null;
+  const ensureClaudeCredentialSync = (agent: AgentId): void => {
+    if (agent !== 'claude' || claudeCredentialSync || !session.pluginAuthToken) return;
+    claudeCredentialSync = startClaudeCredentialSync({
+      sessionId: session.id,
+      pluginId,
+      pluginAuthToken: session.pluginAuthToken,
+      pollSecret: session.pollSecret,
+    });
+  };
+  ensureClaudeCredentialSync(session.agent);
   process.once('exit', () => {
     void claudeCredentialSync?.stop();
   });
@@ -715,6 +723,7 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
       onHandshakeSettled: releaseBeads,
       pollSecret: session.pollSecret,
       mcpServers,
+      onAgentRuntime: ensureClaudeCredentialSync,
       // AUTO mode for headless, mobile-driven sessions: no human at the box
       // to answer permission prompts, so auto-approve them rather than stall
       // the turn (the agent-agnostic equivalent of
