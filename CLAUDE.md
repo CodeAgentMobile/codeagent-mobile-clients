@@ -203,6 +203,24 @@ JetBrains plugin is Kotlin and does **not** consume the shared package — if th
 - **`auto` mode needs agy's terminal sandbox** (a user-namespace re-exec of agy on Linux). A container that blocks unprivileged user namespaces (GitHub Codespaces, the Box with `--cap-drop ALL`) refuses it, and every command fails `Command failed to run: fork/exec /usr/local/bin/agy: operation not permitted`. `agy acp` still advertises and accepts `auto` (its own `-p --mode auto` refuses it), and `enableTerminalSandbox:false` in settings.json does not change it. `agents/antigravity/terminal-sandbox.ts` probes `unshare --user --map-root-user true` once; where it fails, the adapter's `modeSubstitutes` runs `auto` as agy `default` (asks, then runs the command outside the sandbox) and `AcpClient.modeAutoApproves` makes the CLI approve, so every command still goes through our permission gate (internal-path guard, guardrails). A session agy restores in `auto` is moved to `default` too. (2026-11-24)
 - **agy sends `agent_message_chunk` without `messageId`.** Those chunks share `NO_MESSAGE_ID` (`mappers.ts`); a UUID per chunk read as a new message each time, and the runner's new-message paragraph break split the reply mid-word and inside inline code, and the API lifted the orphaned path lines into "read" file cards. The message boundary of an id-less agent is the tool call between two texts (`StreamingState.toolSinceLastText`). Only the Claude and Codex adapters are known to send it. (2026-11-24)
 
+### Remix repos — the agent contract and refused pushes (`agents/acp/remix-context.ts`, owner 2026-11-24)
+
+A repo exported from CodeAgent Remix (root `remix.json`) goes live on every push to its default
+branch, or is refused. Two pieces ride the squad-context block of a turn (`startTaskH`; context,
+never the user's words), and nothing is written into the user's repo:
+- **The contract** — once per (session, agent) in a Remix repo: api-v2's text from public
+  `GET /api/remix/agent-contract?kind=&server=` (api-v2 `remix/remix-agent-contract.ts` is the
+  single source — it is also the `AGENTS.md` every export now commits). Prefetched at
+  `runAcpSession` start, fetched once per process, cached at `~/.codeam/remix-contract/` for offline
+  starts; no copy = no piece (retried next turn). Not in `@codeam/shared` on purpose: a rule change
+  needs no client tag.
+- **A refused push** — the backend relays the command `remix_push_result` to the repo's active
+  sessions (once per app × sha × state). `remixPushResultH` only QUEUES a failure (`noteRemixPushResult`)
+  and acks; the note is read at the start of the agent's NEXT turn — never a turn of its own,
+  never an interruption — once per sha, a newer failure of the app replaces it, `live` drops it.
+- Dry run: `codeam remix-context [dir]` (hidden) prints what the next turn would get. ACP agents
+  only (not the PTY runtime or the baton's native TUI).
+
 ### PTY handling (CLI)
 
 `apps/cli/src/services/claude.service.ts` spawns Claude Code inside a Python PTY helper so Claude sees `stdin.isTTY === true` even when the CLI itself was launched from a non-TTY context. On Windows or when Python is unavailable it falls back to direct spawn.
