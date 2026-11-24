@@ -27,6 +27,7 @@
  * handler registry verbatim for those.
  */
 
+import { prefetchRemixContract } from './remix-context';
 import { deployIdFromWorkspace } from '../../commands/host/workspace';
 import { setCurrentAgentEnv } from '../current-agent-env';
 import { randomUUID } from 'node:crypto';
@@ -1463,6 +1464,8 @@ export async function autoResumeLatestConversation(
 }
 
 export async function runAcpSession(opts: AcpRunnerOptions): Promise<void> {
+  // A Remix repo: fetch the agent contract now, so the first turn never waits on it.
+  prefetchRemixContract();
   const publisher = new AcpPublisher({
     sessionId: opts.sessionId,
     pluginId: opts.pluginId,

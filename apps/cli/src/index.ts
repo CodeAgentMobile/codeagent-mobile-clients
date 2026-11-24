@@ -189,6 +189,20 @@ async function main(): Promise<void> {
     return previewMcp();
   }
 
+  // `codeam remix-context [dir]` — a DRY RUN: prints the Remix context the agent's next turn
+  // would get in that repo (the contract when it has a root remix.json). Sends nothing to any
+  // agent. Hidden: a debugging aid, not a user command.
+  if (command === 'remix-context') {
+    const { readRemixProject, remixContextForTurn } = await import('./agents/acp/remix-context');
+    const dir = args[0] ?? process.cwd();
+    const pieces = await remixContextForTurn('dry-run', 'dry-run', dir);
+    const none = readRemixProject(dir)
+      ? '(remix.json found, but the contract could not be fetched and none is cached)'
+      : '(no Remix context: no root remix.json here)';
+    process.stdout.write(pieces.length > 0 ? `${pieces.join('\n\n')}\n` : `${none}\n`);
+    return;
+  }
+
   // `codeam scratch-mcp` — the from-scratch session's save-prompt tool
   // (suggest_save_project). Launched by the agent's MCP config, never typed
   // by a human; hidden for the same reason as `mcp-run`.

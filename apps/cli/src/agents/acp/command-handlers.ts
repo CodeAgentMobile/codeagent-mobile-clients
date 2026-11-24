@@ -119,6 +119,11 @@ import {
   replyIsHouseAgentLimit,
 } from './failure-messages';
 import { agentHooks } from './agent-hooks';
+import {
+  REMIX_PUSH_RESULT_COMMAND,
+  noteRemixPushResult,
+  remixContextForTurn,
+} from './remix-context';
 import { currentAgentEnv } from '../current-agent-env';
 import { reportCredentialInvalid } from './backend-reports';
 import type { AcpHistory, AcpRunnerOptions, StreamingState } from './runner';
@@ -1032,6 +1037,8 @@ async function runStartTaskTurn(
   const squadContext = collectSquadContext(ctx);
   const languageContext = replyLanguageContextOnce(payload?.locale, opts.sessionId, opts.agent);
   if (languageContext) squadContext.push(languageContext);
+  // A Remix repo: the contract (once per agent) + a refused push queued since the last turn.
+  squadContext.push(...(await remixContextForTurn(opts.sessionId, opts.agent)));
   applySquadContext(blocks, squadContext, squadContextMode(ctx));
   // A USER-initiated prompt always re-arms the autonomous-handoff chain: it
   // interrupts whatever chain was running and gives the new work a full budget.
@@ -1278,7 +1285,10 @@ async function runStartTaskTurn(
             turnPrompt = autoHop.prompt;
             // The routed agent may be new to this session — collect ITS squad
             // context (preamble / briefing) exactly like a user-routed turn.
-            turnPieces = collectSquadContext(ctx);
+            turnPieces = [
+              ...collectSquadContext(ctx),
+              ...(await remixContextForTurn(opts.sessionId, opts.agent)),
+            ];
             turnBlocks = [{ type: 'text', text: turnPrompt }];
             // Same one-time preface the @-mention route gives a newly-routed
             // agent (no-op once that agent has had it this session).
@@ -2218,12 +2228,24 @@ async function switchAgentH(ctx: AcpCommandContext): Promise<void> {
 }
 
 /**
+ * A Remix push result for this repo (api-v2 `remix-push-status.ts`): a refusal is QUEUED for the
+ * agent's next turn — never a turn of its own, never an interruption — and a `live` drops a note
+ * still waiting. Acked at once so the queue never holds it.
+ */
+async function remixPushResultH(ctx: AcpCommandContext): Promise<void> {
+  const outcome = noteRemixPushResult(ctx.cmd.payload);
+  log.info('acpRunner', `remix_push_result → ${outcome}`);
+  await ctx.relay.sendResult(ctx.cmd.id, 'completed', { outcome });
+}
+
+/**
  * Dispatch table — one entry per explicitly-handled relay command type.
  * Aliased types (stop_task/escape_key, set_keep_alive/get_context,
  * session_terminated/shutdown_session, the preview family) share one handler,
  * exactly as their switch cases shared a body/fall-through before.
  */
 export const ACP_COMMAND_HANDLERS: Record<string, AcpCommandHandler> = {
+  [REMIX_PUSH_RESULT_COMMAND]: remixPushResultH,
   integrations_sync: integrationsSyncH,
   integrations_detect: integrationsDetectH,
   beads_action: beadsActionH,
