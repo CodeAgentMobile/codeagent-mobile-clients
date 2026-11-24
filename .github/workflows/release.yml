@@ -26,9 +26,11 @@ on:
 #             JetBrains, GitHub Release, changelog.
 #     red   → `latest` never moves, `next` goes back to `latest`, Discord alert.
 #
-# Why `latest` is the thing to protect: every Box/host self-updates hourly from
-# npm `latest` (host/self-update.ts), new Boxes and the codespace prebuild boot
-# `codeam-box:latest`, and codespaces install `codeam-cli@latest`.
+# Why `latest` is the thing to protect: every Box/host self-updates from npm
+# `latest` (host/self-update.ts) within ~2 min of the promotion (the gate's
+# "Announce the release" push) or at its hourly check, new Boxes and the
+# codespace prebuild boot `codeam-box:latest`, and codespaces install
+# `codeam-cli@latest`.
 #
 # Break-glass: repo variable CLI_RELEASE_GATE=bypass skips the canary (the
 # promotion still runs and says so). Delete the variable afterwards.
@@ -298,6 +300,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # The OIDC token "Announce the release" presents to the backend.
+      id-token: write
     env:
       VERSION: ${{ needs.setup.outputs.version }}
       IMAGE: ghcr.io/codeagentmobile/codeam-box
@@ -439,6 +443,42 @@ jobs:
             exit 1
           fi
           echo "### ✅ codeam-cli@${VERSION} promoted: npm latest + ${IMAGE}:latest" >> "$GITHUB_STEP_SUMMARY"
+
+      # Live host-agents (self-hosted, Boxes, warm codespaces) used to pick a release
+      # up at their next HOURLY self-update check. The backend now pushes `cli_release`
+      # to every connected one; each self-updates within ~2 min, between turns
+      # (api-v2 `POST /api/internal/cli-release`, codeagent-mobile RUNBOOK "A CLI release
+      # reaches LIVE workspaces"). Auth = this job's GitHub OIDC token (repo + release.yml
+      # + this tag), no secret. Best-effort: a failure here never fails the release —
+      # the hourly check still delivers it.
+      - name: Announce the release to the backend (live boxes update now)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          SEEN=$(npm view codeam-cli dist-tags.latest 2>/dev/null || true)
+          if [ "${SEEN}" != "${VERSION}" ]; then
+            echo "latest is ${SEEN:-?}, not ${VERSION} — nothing to announce"
+            exit 0
+          fi
+          TOKEN=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=codeagent-api/cli-release" | jq -r '.value')
+          if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+            echo "::warning::could not mint the GitHub OIDC token — boxes get ${VERSION} at their hourly check"
+            exit 0
+          fi
+          echo "::add-mask::${TOKEN}"
+          for API in https://api.codeagent-mobile.com https://dev-api.codeagent-mobile.com; do
+            OUT=$(curl -sS --max-time 120 -w '\n%{http_code}' -X POST "${API}/api/internal/cli-release" \
+              -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+              -d "{\"version\":\"${VERSION}\"}")
+            CODE=$(echo "${OUT}" | tail -1)
+            BODY=$(echo "${OUT}" | sed '$d')
+            if [ "${CODE}" = "200" ]; then
+              echo "### 📣 ${API}: ${VERSION} announced — $(echo "${BODY}" | jq -c '.data')" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::${API} answered ${CODE} to the release announcement: ${BODY}"
+            fi
+          done
 
   # Keeps the wrapper repo's Codespaces prebuild on the PROMOTED image — it
   # re-pulls `codeam-box:latest`, so it must run after the gate moved it.

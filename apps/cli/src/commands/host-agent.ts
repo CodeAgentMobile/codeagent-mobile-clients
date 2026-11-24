@@ -42,7 +42,7 @@
  */
 
 import { clearCredentialEnv, persistCredentialEnv, readCredentialEnv } from './host/credential-env-store';
-import { isProcessMidTurn } from '../services/turn-marker';
+import { isProcessMidTurn, watchTurnMarkers } from '../services/turn-marker';
 import { keepDeviceAwake, type KeepAwakeDeps } from '../services/keep-awake';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as os from 'node:os';
@@ -66,6 +66,7 @@ function resolveInputPricePerMillion(agentId: string): number {
   return getPricing(model).input;
 }
 import { log } from '../services/logger';
+import { compareSemver } from '../lib/updateNotifier';
 import { runAgentInstallScript } from './host/agent-install';
 import { killQuiet } from '../lib/quiet';
 import { getActiveSession, loadCliConfig, type SavedSession } from '../config';
@@ -152,6 +153,9 @@ export {
 } from './host/host-launch';
 import { EXIT_HOST_NOT_ENROLLED } from '../exit-codes';
 import {
+  CLI_RELEASE_LAG_RETRIES,
+  CLI_RELEASE_LAG_RETRY_MS,
+  CLI_RELEASE_MAX_SPREAD_MS,
   currentCliVersion,
   runSelfUpdate,
   SELF_UPDATE_INTERVAL_MS,
@@ -437,6 +441,16 @@ function isResumePayload(p: Record<string, unknown>): p is ResumePayload & Recor
   return typeof p.sessionId === 'string' && p.sessionId.length > 0;
 }
 
+/** `cli_release` — the backend announcing that `version` just became npm `latest`. */
+interface CliReleasePayload {
+  version: string;
+  spreadMs?: number;
+}
+
+function isCliReleasePayload(p: Record<string, unknown>): p is CliReleasePayload & Record<string, unknown> {
+  return typeof p.version === 'string' && /^\d+\.\d+\.\d+$/.test(p.version);
+}
+
 function isCleanupPayload(
   p: Record<string, unknown>,
 ): p is CleanupPayload & Record<string, unknown> {
@@ -706,6 +720,17 @@ export interface HostAgentDeps {
    *  per-process marker (services/turn-marker.ts); injectable for tests. */
   isChildMidTurn?: (pid: number | undefined) => boolean;
   /**
+   * Calls back when any turn marker appears or goes away; returns the closer. It
+   * watches what the default {@link isChildMidTurn} reads, so it defaults to
+   * {@link watchTurnMarkers} only when `isChildMidTurn` is the default too (a test
+   * that fakes one must not get a real watcher over the user's `~/.codeam/turns`).
+   */
+  watchTurns?: (onChange: () => void) => () => void;
+  /** Version of the code running (build-time); injectable for the `cli_release` tests. */
+  currentVersion?: () => string | null;
+  /** `[0, 1)` source for the `cli_release` jitter; injectable for tests. */
+  random?: () => number;
+  /**
    * Docker control-plane runner for the fleet `fleet_*` handlers (CodeAgent
    * Box rescue fleet). Additive — a normal self-hosted box never receives a
    * `fleet_*` command, so this stays dormant. Defaults to
@@ -771,6 +796,17 @@ export class HostAgentSupervisor {
   private pendingRestartSince: number | null = null;
   /** epoch ms of `start()`; null until then. See {@link SELF_UPDATE_BOOT_QUIET_MS}. */
   private startedAt: number | null = null;
+  private readonly watchTurns: (onChange: () => void) => () => void;
+  private readonly currentVersion: () => string | null;
+  private readonly random: () => number;
+  /** Closer of the turn-marker watch armed while a restart waits for a turn to end. */
+  private closeTurnWatch: (() => void) | null = null;
+  /** One-shot retry at the end of the post-boot quiet window. */
+  private quietWindowTimer: NodeJS.Timeout | null = null;
+  /** The newest version a `cli_release` announced that we are not running yet. */
+  private announcedVersion: string | null = null;
+  private releaseTimer: NodeJS.Timeout | null = null;
+  private releaseLagRetries = 0;
   /** Guards the one-shot 'connected' telemetry on the first heartbeat. */
   private reportedConnected = false;
   /** Live-metrics collector — stateful across beats (CPU delta + latency). */
@@ -841,6 +877,10 @@ export class HostAgentSupervisor {
     this.now = deps.now ?? (() => Date.now());
     this.onUpdated = deps.onUpdated ?? defaultOnUpdated;
     this.isChildMidTurn = deps.isChildMidTurn ?? ((pid) => isProcessMidTurn(pid));
+    this.watchTurns =
+      deps.watchTurns ?? (deps.isChildMidTurn ? () => () => undefined : (cb) => watchTurnMarkers(cb));
+    this.currentVersion = deps.currentVersion ?? currentCliVersion;
+    this.random = deps.random ?? Math.random;
     this.docker = deps.docker ?? defaultDockerRunner;
     this.keepAwakeFn = deps.keepAwake ?? keepDeviceAwake;
     this.isContainerEnv = deps.isContainerEnv ?? (() => isContainerEnvironment());
@@ -983,6 +1023,15 @@ export class HostAgentSupervisor {
       clearTimeout(this.selfUpdateStartupTimer);
       this.selfUpdateStartupTimer = null;
     }
+    if (this.releaseTimer) {
+      clearTimeout(this.releaseTimer);
+      this.releaseTimer = null;
+    }
+    if (this.quietWindowTimer) {
+      clearTimeout(this.quietWindowTimer);
+      this.quietWindowTimer = null;
+    }
+    this.disarmTurnWatch();
     this.relay?.stop();
     for (const child of this.children.values()) {
       killQuiet(child.proc);
@@ -1169,8 +1218,9 @@ export class HostAgentSupervisor {
       log.info(
         'host-agent',
         `self-update: ${version} installed but sessions resumed by this boot are being served — ` +
-          'deferring restart to the next idle tick (or the next boot)',
+          'deferring restart to the end of the quiet window',
       );
+      this.armQuietWindowRetry();
       return false;
     }
     if (midTurn || fleetBusy) {
@@ -1186,6 +1236,8 @@ export class HostAgentSupervisor {
           'host-agent',
           `self-update: ${version} installed but ${fleetBusy ? `${this.fleetLanes.size} fleet op(s) are in flight` : 'a session is mid-turn'} — deferring restart`,
         );
+        // Fleet lanes retry on drain (`runInFleetLane`); a turn retries when it ends.
+        if (midTurn) this.armTurnWatch();
         return false;
       }
       log.warn(
@@ -1208,6 +1260,99 @@ export class HostAgentSupervisor {
       this.pendingOrphanReplacements > 0 ||
       [...this.resumeStates.values()].some((st) => st.timer !== null)
     );
+  }
+
+  /**
+   * A restart owed while a turn runs is taken the moment the last turn ends —
+   * not at the next hourly tick, which is what made a release reach a busy box up
+   * to an hour late. Event-driven: the turn markers' directory is watched only
+   * while a restart is owed.
+   */
+  private armTurnWatch(): void {
+    if (this.closeTurnWatch || this.stopped) return;
+    this.closeTurnWatch = this.watchTurns(() => {
+      if (this.pendingRestartVersion === null || this.maybeRestartForUpdate(this.pendingRestartVersion)) {
+        this.disarmTurnWatch();
+      }
+    });
+  }
+
+  private disarmTurnWatch(): void {
+    this.closeTurnWatch?.();
+    this.closeTurnWatch = null;
+  }
+
+  /** Retry the owed restart once the post-boot quiet window is over. */
+  private armQuietWindowRetry(): void {
+    if (this.quietWindowTimer || this.startedAt === null || this.stopped) return;
+    const remaining = this.startedAt + SELF_UPDATE_BOOT_QUIET_MS - this.now();
+    this.quietWindowTimer = setTimeout(() => {
+      this.quietWindowTimer = null;
+      if (this.pendingRestartVersion !== null) this.maybeRestartForUpdate(this.pendingRestartVersion);
+    }, Math.max(0, remaining) + 1_000);
+    this.quietWindowTimer.unref?.();
+  }
+
+  /**
+   * `cli_release`: the release workflow just made `version` npm `latest` and the
+   * backend pushed it to every connected host. Run the SAME self-update as the
+   * hourly tick — same install, same restart rules (never mid-turn, never inside
+   * the boot quiet window) — after a random delay so a fleet doesn't stampede npm.
+   */
+  onCliRelease(payload: CliReleasePayload): void {
+    const { version } = payload;
+    const current = this.currentVersion();
+    if (!current) return;
+    if (compareSemver(version, current) <= 0) {
+      log.info('host-agent', `cli_release ${version} announced — already running ${current}`);
+      return;
+    }
+    if (this.pendingRestartVersion !== null && compareSemver(this.pendingRestartVersion, version) >= 0) {
+      // Already installed and waiting for a turn to end / the quiet window.
+      this.maybeRestartForUpdate(this.pendingRestartVersion);
+      return;
+    }
+    if (this.announcedVersion === null || compareSemver(version, this.announcedVersion) > 0) {
+      this.announcedVersion = version;
+      this.releaseLagRetries = 0;
+    }
+    if (this.releaseTimer || this.stopped) return;
+    const spread = Math.min(Math.max(0, payload.spreadMs ?? 0), CLI_RELEASE_MAX_SPREAD_MS);
+    const delay = Math.floor(this.random() * spread);
+    log.info(
+      'host-agent',
+      `cli_release ${version} announced (running ${current}) — self-update in ${Math.round(delay / 1000)}s`,
+    );
+    this.scheduleReleaseCheck(delay);
+  }
+
+  private scheduleReleaseCheck(delayMs: number): void {
+    this.releaseTimer = setTimeout(() => void this.releaseCheck(), delayMs);
+    this.releaseTimer.unref?.();
+  }
+
+  private async releaseCheck(): Promise<void> {
+    this.releaseTimer = null;
+    await this.selfUpdateTick();
+    const announced = this.announcedVersion;
+    const current = this.currentVersion();
+    if (announced === null || this.stopped) return;
+    const reached =
+      (this.pendingRestartVersion !== null && compareSemver(this.pendingRestartVersion, announced) >= 0) ||
+      (current !== null && compareSemver(current, announced) >= 0);
+    if (reached || this.releaseLagRetries >= CLI_RELEASE_LAG_RETRIES) {
+      this.announcedVersion = null;
+      return;
+    }
+    // npm still answered an older `latest` (replica lag), or a tick was already
+    // running and this one was skipped: look again shortly.
+    this.releaseLagRetries++;
+    log.info(
+      'host-agent',
+      `cli_release ${announced}: not installed yet — checking again in ${CLI_RELEASE_LAG_RETRY_MS / 1000}s ` +
+        `(${this.releaseLagRetries}/${CLI_RELEASE_LAG_RETRIES})`,
+    );
+    this.scheduleReleaseCheck(CLI_RELEASE_LAG_RETRY_MS);
   }
 
   /** Number of live children — for tests + diagnostics. */
@@ -1384,6 +1529,14 @@ export class HostAgentSupervisor {
     }
     if (cmd.type === 'host_list_dir') {
       await this.listDir(cmd);
+      return;
+    }
+    if (cmd.type === 'cli_release') {
+      if (!isCliReleasePayload(cmd.payload)) {
+        log.warn('host-agent', `ignoring malformed cli_release id=${cmd.id}`);
+        return;
+      }
+      this.onCliRelease(cmd.payload);
       return;
     }
     if (cmd.type === 'self_hosted_refresh_credentials') {

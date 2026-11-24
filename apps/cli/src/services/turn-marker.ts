@@ -22,8 +22,31 @@ function codeamHome(): string {
   return path.join(os.homedir(), '.codeam');
 }
 
+export function turnsDir(home: string = codeamHome()): string {
+  return path.join(home, 'turns');
+}
+
 export function turnMarkerPath(pid: number = process.pid, home: string = codeamHome()): string {
-  return path.join(home, 'turns', String(pid));
+  return path.join(turnsDir(home), String(pid));
+}
+
+/**
+ * Calls `onChange` whenever a turn marker appears or goes away (any process of this
+ * user). The host-agent uses it to restart onto an installed update the moment the
+ * last running turn ends, instead of at its next hourly tick. Returns the closer;
+ * a filesystem that can't be watched yields a no-op (the hourly tick still covers it).
+ */
+export function watchTurnMarkers(onChange: () => void, home?: string): () => void {
+  try {
+    const dir = turnsDir(home);
+    fs.mkdirSync(dir, { recursive: true });
+    const watcher = fs.watch(dir, () => onChange());
+    watcher.on('error', () => undefined);
+    watcher.unref?.();
+    return () => watcher.close();
+  } catch {
+    return () => undefined;
+  }
 }
 
 function mark(): void {

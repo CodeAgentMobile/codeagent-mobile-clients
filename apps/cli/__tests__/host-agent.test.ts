@@ -2766,9 +2766,10 @@ describe('HostAgentSupervisor — periodic self-update', () => {
      * installed 2.76.16 and restarted at 07:37:51 because the just-resumed
      * session was not mid-turn, so the agent (~27 s) and the preview (new
      * quick-tunnel URL) came up twice. While the boot's sessions are served the
-     * restart waits for the next idle tick (the next boot runs `current` anyway).
+     * restart waits out the quiet window, then restarts once it is over — not an
+     * hour later at the next tick (a `cli_release` push must land in minutes).
      */
-    it('does NOT restart right after boot while it serves a session; the next idle tick does', async () => {
+    it('does NOT restart right after boot while it serves a session; it does once the quiet window ends', async () => {
       const cwdTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'codeam-su-boot-'));
       const child = fakeChildWithStreams();
       const selfUpdate = vi
@@ -2803,8 +2804,8 @@ describe('HostAgentSupervisor — periodic self-update', () => {
         await vi.advanceTimersByTimeAsync(SELF_UPDATE_BOOT_QUIET_MS - SELF_UPDATE_STARTUP_DELAY_MS - 1);
         expect(onUpdated).not.toHaveBeenCalled();
 
-        // The hourly tick, session idle → restart onto the owed version.
-        await vi.advanceTimersByTimeAsync(60 * 60_000);
+        // The window is over, session idle → restart onto the owed version.
+        await vi.advanceTimersByTimeAsync(1_500);
         expect(onUpdated).toHaveBeenCalledTimes(1);
         expect(onUpdated).toHaveBeenCalledWith('9.9.9');
       } finally {
@@ -5080,5 +5081,154 @@ describe('HostAgentSupervisor — fleet lanes', () => {
     } finally {
       releasePull();
     }
+  });
+});
+
+/**
+ * `cli_release` — the backend pushes it the moment the release workflow promotes a
+ * version to npm `latest` (owner 2026-11-24: a release must reach live sessions in
+ * about a minute, not at the next hourly tick). Same self-update, same restart rules.
+ */
+describe('HostAgentSupervisor — cli_release push', () => {
+  beforeEach(() => {
+    stubBestEffortFetch();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const releaseCmd = (payload: Record<string, unknown>): RemoteCommand => ({
+    id: 'rel-1',
+    sessionId: 'sh-plugin-1',
+    type: 'cli_release',
+    payload,
+  });
+
+  function makeSupervisor(over: {
+    selfUpdate: () => Promise<SelfUpdateResult>;
+    midTurn?: () => boolean;
+    random?: () => number;
+  }) {
+    const onUpdated = vi.fn();
+    let turnsChanged: (() => void) | null = null;
+    const closeWatch = vi.fn(() => {
+      turnsChanged = null;
+    });
+    const child = fakeChildWithStreams();
+    const sup = new HostAgentSupervisor(IDENTITY, {
+      makeRelay: () => ({ start: vi.fn(), stop: vi.fn(), sendResult: vi.fn() }),
+      spawnChild: () => child,
+      resolveAgentAuth: vi.fn().mockResolvedValue({ kind: 'oauth_token', value: '{}' }),
+      selfUpdate: over.selfUpdate,
+      onUpdated,
+      isChildMidTurn: over.midTurn ?? (() => false),
+      watchTurns: (cb) => {
+        turnsChanged = cb;
+        return closeWatch;
+      },
+      currentVersion: () => '2.76.57',
+      random: over.random ?? (() => 0.5),
+    });
+    return { sup, onUpdated, closeWatch, fireTurnsChanged: () => turnsChanged?.(), child };
+  }
+
+  it('runs the self-update after the jitter and restarts onto it when idle', async () => {
+    const selfUpdate = vi.fn(async (): Promise<SelfUpdateResult> => ({ status: 'updated', version: '2.76.58' }));
+    const { sup, onUpdated } = makeSupervisor({ selfUpdate });
+
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 120_000 }));
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(selfUpdate).not.toHaveBeenCalled(); // random 0.5 × 120 s = 60 s
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(selfUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdated).toHaveBeenCalledWith('2.76.58');
+  });
+
+  it('ignores a release it already runs, and a malformed one', async () => {
+    const selfUpdate = vi.fn(async (): Promise<SelfUpdateResult> => ({ status: 'current' }));
+    const { sup } = makeSupervisor({ selfUpdate });
+    await sup.handleCommand(releaseCmd({ version: '2.76.57', spreadMs: 1_000 }));
+    await sup.handleCommand(releaseCmd({ version: 'latest', spreadMs: 1_000 }));
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(selfUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a repeated announcement does not schedule a second check', async () => {
+    const selfUpdate = vi.fn(async (): Promise<SelfUpdateResult> => ({ status: 'updated', version: '2.76.58' }));
+    const { sup } = makeSupervisor({ selfUpdate, random: () => 0 });
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 120_000 }));
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 120_000 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(selfUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('never restarts mid-turn: it waits, and restarts the moment the turn ends', async () => {
+    let midTurn = true;
+    const selfUpdate = vi.fn(async (): Promise<SelfUpdateResult> => ({ status: 'updated', version: '2.76.58' }));
+    const { sup, onUpdated, closeWatch, fireTurnsChanged } = makeSupervisor({
+      selfUpdate,
+      midTurn: () => midTurn,
+      random: () => 0,
+    });
+    const cwdTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'codeam-rel-'));
+    await sup.handleCommand(deployCmd({ repoOrPath: cwdTarget }));
+    expect(sup.childCount()).toBe(1);
+
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 120_000 }));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(selfUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdated).not.toHaveBeenCalled();
+
+    // Another turn starts → still busy, still waiting.
+    fireTurnsChanged();
+    expect(onUpdated).not.toHaveBeenCalled();
+
+    // The turn ends: restart now, not at the next hourly tick.
+    midTurn = false;
+    fireTurnsChanged();
+    expect(onUpdated).toHaveBeenCalledTimes(1);
+    expect(onUpdated).toHaveBeenCalledWith('2.76.58');
+    expect(closeWatch).toHaveBeenCalled();
+
+    // No second check either: the version is installed.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(selfUpdate).toHaveBeenCalledTimes(1);
+    fs.rmSync(cwdTarget, { recursive: true, force: true });
+  });
+
+  it('when npm still serves the previous latest, checks again a minute later', async () => {
+    const selfUpdate = vi
+      .fn<() => Promise<SelfUpdateResult>>()
+      .mockResolvedValueOnce({ status: 'current' })
+      .mockResolvedValue({ status: 'updated', version: '2.76.58' });
+    const { sup, onUpdated } = makeSupervisor({ selfUpdate, random: () => 0 });
+
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 120_000 }));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(selfUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdated).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(selfUpdate).toHaveBeenCalledTimes(2);
+    expect(onUpdated).toHaveBeenCalledWith('2.76.58');
+  });
+
+  it('gives the lag retries up after a few tries (the hourly check takes over)', async () => {
+    const selfUpdate = vi.fn(async (): Promise<SelfUpdateResult> => ({ status: 'current' }));
+    const { sup } = makeSupervisor({ selfUpdate, random: () => 0 });
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 120_000 }));
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(selfUpdate).toHaveBeenCalledTimes(4); // first check + 3 retries
+  });
+
+  it('caps an oversized spread', async () => {
+    const selfUpdate = vi.fn(async (): Promise<SelfUpdateResult> => ({ status: 'current' }));
+    const { sup } = makeSupervisor({ selfUpdate, random: () => 0.999 });
+    await sup.handleCommand(releaseCmd({ version: '2.76.58', spreadMs: 24 * 60 * 60_000 }));
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(selfUpdate).toHaveBeenCalledTimes(1);
   });
 });

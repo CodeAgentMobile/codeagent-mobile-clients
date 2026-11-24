@@ -6,6 +6,7 @@ import {
   __resetTurnMarkerDepth,
   isProcessMidTurn,
   turnMarkerPath,
+  watchTurnMarkers,
   withTurnMarker,
 } from '../../src/services/turn-marker';
 
@@ -58,5 +59,39 @@ describe('turn marker', () => {
 
   it('an unknown pid is never mid-turn', () => {
     expect(isProcessMidTurn(undefined)).toBe(false);
+  });
+});
+
+describe('watchTurnMarkers', () => {
+  // The host-agent restarts onto an owed update the moment the last turn ends. The
+  // production shape: a turn is ALREADY running when the restart is deferred and the
+  // watch armed; what must arrive is the END of that turn.
+  it('fires when a running turn ends, and stops after close', async () => {
+    const codeam = path.join(home, '.codeam');
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let release: () => void = () => undefined;
+    const turn = withTurnMarker(() => new Promise<void>((r) => (release = r)));
+    let events = 0;
+    const close = watchTurnMarkers(() => {
+      events++;
+    }, codeam);
+    // macOS FSEvents drops changes made in the first instants of a new stream.
+    await sleep(500);
+    events = 0;
+    release();
+    await turn;
+    for (let i = 0; i < 60 && events === 0; i++) await sleep(50);
+    expect(events).toBeGreaterThan(0);
+    close();
+    const afterClose = events;
+    await withTurnMarker(async () => undefined);
+    await sleep(300);
+    expect(events).toBe(afterClose);
+  }, 10_000);
+
+  it('a directory it cannot create yields a no-op closer, never a throw', () => {
+    const file = path.join(home, 'not-a-dir');
+    fs.writeFileSync(file, 'x');
+    expect(() => watchTurnMarkers(() => undefined, file)()).not.toThrow();
   });
 });
