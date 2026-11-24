@@ -55,6 +55,10 @@ import { fetchCurrentPluginAuthToken, postPreviewEvent } from '../services/pairi
 import { capture, identifyUser, shutdownTelemetry } from '../services/telemetry.service';
 import { provisionBeadsForStart } from '../beads/wiring';
 import { startClaudeCredentialSync } from '../agents/claude/credential-sync';
+import {
+  createClaudeCredentialLease,
+  setActiveClaudeLease,
+} from '../agents/claude/credential-lease';
 import { ensureBeadsWorkflowHint } from '../beads/workflow-hint';
 import { ensureScratchWorkflowHint } from '../scratch/workflow-hint';
 import { pickPinnedSession } from './start/pick-session';
@@ -298,6 +302,12 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
   // like a deployed one, and without this watcher the vault kept the spent
   // token → the next switch/deploy got `invalid_grant` → "re-link" (owner,
   // 2026-11-24).
+  //
+  // ⚠️ Cloud sessions also get the credential LEASE (codeagent-3570): before
+  // each turn the box asks the server for a credential valid for the next hour,
+  // so the box's Claude never spends the single-use refresh token itself and
+  // the server, under one lock, is the only writer of rotations. Not on a local
+  // session: there the file is the user's own login.
   let claudeCredentialSync: ReturnType<typeof startClaudeCredentialSync> | null = null;
   const ensureClaudeCredentialSync = (agent: AgentId): void => {
     if (agent !== 'claude' || claudeCredentialSync || !session.pluginAuthToken) return;
@@ -307,6 +317,16 @@ export async function start(requestedAgent?: AgentId, presetSession?: SavedSessi
       pluginAuthToken: session.pluginAuthToken,
       pollSecret: session.pollSecret,
     });
+    if (!isLocalSession()) {
+      setActiveClaudeLease(
+        createClaudeCredentialLease({
+          sessionId: session.id,
+          pluginId,
+          pluginAuthToken: session.pluginAuthToken,
+          pollSecret: session.pollSecret,
+        }),
+      );
+    }
   };
   ensureClaudeCredentialSync(session.agent);
   process.once('exit', () => {

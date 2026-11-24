@@ -7,7 +7,82 @@ vi.mock('../../src/services/pairing.service', () => ({
   _postJsonAuthed: vi.fn(),
 }));
 
+// The box's local Claude login is read for the stale-holder fingerprint; keep
+// these tests independent of the developer machine's ~/.claude.
+const leaseMock = vi.hoisted(() => ({
+  sha: null as string | null,
+  recover: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../src/agents/claude/credential-lease', () => ({
+  localClaudeRefreshTokenSha256: () => leaseMock.sha,
+  activeClaudeLease: () => ({ recover: leaseMock.recover }),
+}));
+
 import { fetchCurrentPluginAuthToken } from '../../src/services/pairing.service';
+
+describe('reportCredentialInvalid — stale holder (codeagent-3570)', () => {
+  it('sends the sha256 of the held Claude refresh token, and leases the vault credential when told it is stale', async () => {
+    leaseMock.sha = 'a'.repeat(64);
+    leaseMock.recover.mockClear();
+    const calls: Array<{ init: RequestInit }> = [];
+    const fakeFetch = vi.fn(async (_url: string, init: RequestInit) => {
+      calls.push({ init });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { acknowledged: true, staleHolder: true } }),
+      } as Response;
+    }) as unknown as typeof fetch;
+
+    await reportCredentialInvalid(
+      { agent: 'claude', sessionId: 's1', pluginId: 'p1', pluginAuthToken: 'tok' },
+      fakeFetch,
+    );
+
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      sessionId: 's1',
+      pluginId: 'p1',
+      heldRefreshTokenSha256: 'a'.repeat(64),
+    });
+    expect(leaseMock.recover).toHaveBeenCalledTimes(1);
+    leaseMock.sha = null;
+  });
+
+  it('does not lease when the backend accepted the report (the vault itself is dead)', async () => {
+    leaseMock.sha = 'b'.repeat(64);
+    leaseMock.recover.mockClear();
+    const fakeFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: { acknowledged: true } }),
+    })) as unknown as typeof fetch;
+
+    await reportCredentialInvalid(
+      { agent: 'claude', sessionId: 's1', pluginId: 'p1', pluginAuthToken: 'tok' },
+      fakeFetch,
+    );
+
+    expect(leaseMock.recover).not.toHaveBeenCalled();
+    leaseMock.sha = null;
+  });
+
+  it('never fingerprints a non-Claude agent', async () => {
+    leaseMock.sha = 'c'.repeat(64);
+    const calls: Array<{ init: RequestInit }> = [];
+    const fakeFetch = vi.fn(async (_url: string, init: RequestInit) => {
+      calls.push({ init });
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    await reportCredentialInvalid(
+      { agent: 'codex', sessionId: 's1', pluginId: 'p1', pluginAuthToken: 'tok' },
+      fakeFetch,
+    );
+
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ sessionId: 's1', pluginId: 'p1' });
+    leaseMock.sha = null;
+  });
+});
 
 describe('reportCredentialInvalid', () => {
   it('POSTs to the credential-invalid endpoint with the plugin-auth header + body', async () => {

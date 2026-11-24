@@ -11,6 +11,7 @@
 import { resolveApiBaseUrl } from '@codeam/shared';
 import { fetchCurrentPluginAuthToken } from '../../services/pairing.service';
 import { log } from '../../services/logger';
+import { activeClaudeLease, localClaudeRefreshTokenSha256 } from '../claude/credential-lease';
 
 /**
  * WHY a credential is unusable. Optional on the wire (older backends ignore an
@@ -46,10 +47,16 @@ export async function reportCredentialInvalid(
   const url = `${resolveApiBaseUrl()}/api/plugin/agents/${encodeURIComponent(opts.agent)}/credential-invalid`;
   // `reason` is OMITTED when absent so the body stays byte-identical to the
   // pre-reason wire for every existing caller (old backends validate strictly).
+  // Claude: say WHICH refresh token this box holds (its sha256, never the
+  // token). If the vault has moved on, this box is a stale holder of a spent
+  // token and the backend keeps the vault alive instead of marking it dead
+  // (codeagent-3570).
+  const heldRefreshTokenSha256 = isClaudeAgent(opts.agent) ? localClaudeRefreshTokenSha256() : null;
   const body = JSON.stringify({
     sessionId: opts.sessionId,
     pluginId: opts.pluginId,
     ...(opts.reason ? { reason: opts.reason } : {}),
+    ...(heldRefreshTokenSha256 ? { heldRefreshTokenSha256 } : {}),
   });
   // ⚠️ LOG IT. This used to run completely silently — no record that it fired,
   // for which agent, or what the backend said, and the catch swallowed
@@ -87,10 +94,12 @@ export async function reportCredentialInvalid(
           body,
         });
         log.info('acpRunner', `credential-invalid ← ${retried.status} (after token refresh)`);
+        if (heldRefreshTokenSha256) await healIfStaleHolder(retried);
         return;
       }
     }
     log.info('acpRunner', `credential-invalid ← ${response.status}`);
+    if (heldRefreshTokenSha256) await healIfStaleHolder(response);
   } catch (err) {
     // Best-effort — credential recovery must never break the runner. But say so.
     log.warn(
@@ -98,6 +107,23 @@ export async function reportCredentialInvalid(
       `credential-invalid → failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+function isClaudeAgent(agent: string): boolean {
+  return agent === 'claude' || agent === 'claude_code';
+}
+
+/** The backend answered `staleHolder`: the vault is alive and this box holds a
+ *  spent token. Lease the vault's credential now so the next turn works. */
+async function healIfStaleHolder(response: Response): Promise<void> {
+  if (!response.ok) return;
+  const json: unknown = await response.json().catch(() => null);
+  const data = typeof json === 'object' && json !== null && 'data' in json ? json.data : undefined;
+  const stale =
+    typeof data === 'object' && data !== null && 'staleHolder' in data && data.staleHolder === true;
+  if (!stale) return;
+  log.info('acpRunner', 'credential-invalid ← stale holder: leasing the vault credential');
+  await activeClaudeLease()?.recover();
 }
 
 /**

@@ -127,6 +127,7 @@ import {
   startupCredentialInvalidReason,
   startupFailureMessage,
 } from './failure-messages';
+import { activeClaudeLease } from '../claude/credential-lease';
 import { reportCredentialInvalid } from './backend-reports';
 import { agentHooks } from './agent-hooks';
 import { TurnQueue } from './turn-queue';
@@ -1530,6 +1531,8 @@ export async function runAcpSession(opts: AcpRunnerOptions): Promise<void> {
     mcpServers: opts.mcpServers,
     onSessionUpdate: (notification) => {
       updateCount += 1;
+      // Only acts inside a leased Claude turn: a number compare, no I/O.
+      activeClaudeLease()?.onAgentActivity();
       const variant =
         (notification.update as { sessionUpdate?: string })?.sessionUpdate ?? 'unknown';
       const deltas = mapSessionUpdate(notification, toolCallTracker);
