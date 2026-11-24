@@ -320,6 +320,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          # `next` never moves backwards either (the dev fleet runs `codeam-box:next`).
+          CURRENT=$(npm view codeam-cli dist-tags.next 2>/dev/null || echo 0.0.0)
+          OLDER=$(node -e 'const p=(v)=>v.split(".").map(Number);const [a,b]=[p(process.argv[1]),p(process.argv[2])];for(let i=0;i<3;i++){if(a[i]!==b[i]){console.log(a[i]<b[i]?"yes":"no");process.exit(0)}}console.log("no")' "${VERSION}" "${CURRENT}")
+          if [ "${OLDER}" = "yes" ]; then
+            echo "::warning::codeam-cli@${VERSION} is older than next ${CURRENT} — next left as is (the canary still tests ${VERSION})."
+            exit 0
+          fi
           npm dist-tag add "codeam-cli@${VERSION}" next
           npm dist-tag add "@codeam/shared@${VERSION}" next
           docker buildx imagetools create -t "${IMAGE}:next" "${IMAGE}:${VERSION}"
@@ -406,6 +413,16 @@ jobs:
           if [ "${BYPASS}" = "true" ]; then
             echo "::warning::CLI_RELEASE_GATE=bypass — promoting codeam-cli@${VERSION} WITHOUT the journey canary. Delete the repo variable once the emergency is over."
             echo "### ⚠️ Gate BYPASSED (CLI_RELEASE_GATE=bypass) — promoted without the canary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # `latest` never moves BACKWARDS (2026-11-24: v2.76.56's gate finished after v2.76.57's and
+          # put latest back on 2.76.56 — every box's self-update would have downgraded). Releases queue
+          # in one concurrency group, so an older tag can promote last.
+          CURRENT=$(npm view codeam-cli dist-tags.latest 2>/dev/null || echo 0.0.0)
+          NEWER=$(node -e 'const p=(v)=>v.split(".").map(Number);const [a,b]=[p(process.argv[1]),p(process.argv[2])];for(let i=0;i<3;i++){if(a[i]!==b[i]){console.log(a[i]>b[i]?"yes":"no");process.exit(0)}}console.log("same")' "${VERSION}" "${CURRENT}")
+          if [ "${NEWER}" = "no" ]; then
+            echo "::warning::codeam-cli@${VERSION} is older than latest ${CURRENT} — not promoting (latest stays ${CURRENT})."
+            echo "### ↩︎ ${VERSION} is older than \`latest\` ${CURRENT} — left as is" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           npm dist-tag add "codeam-cli@${VERSION}" latest
           npm dist-tag add "@codeam/shared@${VERSION}" latest
