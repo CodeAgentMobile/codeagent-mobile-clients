@@ -62,6 +62,45 @@ export interface FleetMigrateBoxImagePayload {
   containerName: string;
   limits: FleetCreateBoxPayload['limits'];
   apiOrigin: string;
+  /**
+   * A RUNNING box may be recreated from `:latest` and started again — only when
+   * no turn is in flight inside it ({@link FLEET_BOX_TURNS_PROBE}). Sent for the
+   * boxes the backend never sleeps (review/canary accounts), which otherwise keep
+   * the image they were born on forever. Absent → a RUNNING box is skipped.
+   */
+  restartIfIdle?: boolean;
+}
+
+/**
+ * `docker exec` argv that prints the pid of every turn running inside a box.
+ *
+ * The box's sessions drop `~/.codeam/turns/<pid>` for the length of a turn
+ * (`services/turn-marker.ts`) — the same marker the in-box host-agent waits on
+ * before it restarts onto an update. Only markers whose pid is alive count: a
+ * session killed mid-turn leaves its file behind, and a stale one must not pin
+ * the box to its old image. Runs inside the container's pid namespace, so
+ * `/proc/<pid>` is the box's own process table.
+ */
+export const FLEET_BOX_TURNS_PROBE = [
+  'sh',
+  '-c',
+  'for p in $(ls -A /home/box/.codeam/turns 2>/dev/null); do [ -d "/proc/$p" ] && echo "$p"; done; exit 0',
+];
+
+/**
+ * Args to recreate a RUNNING box from `:latest` (`fleet_migrate_box_image` with
+ * `restartIfIdle`): the full `run` template, minus the inline pull (the caller
+ * pulled once to decide the box is stale) and with NO enroll token — the box
+ * resumes its sealed identity from the volume, exactly like a migrated box that
+ * is woken later, so it keeps its host id and its sessions resume at boot.
+ */
+export function buildFleetBoxRecreateArgs(p: {
+  boxId: string;
+  containerName: string;
+  apiOrigin: string;
+  limits: FleetCreateBoxPayload['limits'];
+}): string[] {
+  return buildFleetBoxRunArgs(p).filter((a) => a !== '--pull=always');
 }
 
 /** The `fleet_start_box` / `fleet_stop_box` / `fleet_delete_box` payload
@@ -137,6 +176,7 @@ export function isFleetMigrateBoxImagePayload(
     typeof p.apiOrigin === 'string' &&
     p.apiOrigin.length > 0 &&
     isFleetLimits(p.limits) &&
+    (p.restartIfIdle === undefined || typeof p.restartIfIdle === 'boolean') &&
     // ⚠️ REJECT a token outright rather than ignoring it. A migrate that
     // carried one would bake a 15-minute credential into a container that may
     // not start for days — a terminal 4xx at boot, i.e. a box that never comes

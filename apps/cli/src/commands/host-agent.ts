@@ -173,6 +173,8 @@ import {
 } from './host/fleet-image-gc';
 import {
   buildFleetBoxMigrateArgs,
+  buildFleetBoxRecreateArgs,
+  FLEET_BOX_TURNS_PROBE,
   buildFleetBoxRunArgs,
   defaultDockerRunner,
   DOCKER_PRUNE_TIMEOUT_MS,
@@ -1723,7 +1725,8 @@ export class HostAgentSupervisor {
       );
       return;
     }
-    if (state.stdout.trim() === 'true') {
+    const running = state.stdout.trim() === 'true';
+    if (running && payload.restartIfIdle !== true) {
       log.info(
         'host-agent',
         `fleet_migrate_box_image: ${containerName} is RUNNING — skipping (never touch a live box)`,
@@ -1742,6 +1745,27 @@ export class HostAgentSupervisor {
       return;
     }
 
+    // A RUNNING box (restartIfIdle) is recreated only between turns. Asked
+    // AFTER the pull — the slow step — so the answer is fresh when we act on it.
+    if (running) {
+      const turns = await this.docker.run(['exec', containerName, ...FLEET_BOX_TURNS_PROBE]);
+      if (turns.code !== 0) {
+        log.warn(
+          'host-agent',
+          `fleet_migrate_box_image: cannot tell whether ${containerName} is mid-turn ` +
+            `(code=${turns.code}) — leaving it on its image`,
+        );
+        return;
+      }
+      if (turns.stdout.trim() !== '') {
+        log.info(
+          'host-agent',
+          `fleet_migrate_box_image: ${containerName} is mid-turn — leaving it for the next release`,
+        );
+        return;
+      }
+    }
+
     // rm WITHOUT -v → the named volume (workspace + sealed identity) survives.
     const rm = await this.docker.run(['rm', '-f', containerName], {
       timeoutMs: DOCKER_RUN_TIMEOUT_MS,
@@ -1756,20 +1780,25 @@ export class HostAgentSupervisor {
       // fail on the name clash and leave the box in neither state.
     }
 
-    const res = await this.docker.run(buildFleetBoxMigrateArgs(payload), {
-      timeoutMs: DOCKER_RUN_TIMEOUT_MS,
-    });
+    // A sleeping box is only re-pointed (`create`, stays asleep); a running one
+    // is started again on the new image, same volume, no token.
+    const res = await this.docker.run(
+      running ? buildFleetBoxRecreateArgs(payload) : buildFleetBoxMigrateArgs(payload),
+      { timeoutMs: DOCKER_RUN_TIMEOUT_MS },
+    );
     if (res.code !== 0) {
       log.warn(
         'host-agent',
-        `fleet_migrate_box_image: create of ${containerName} failed (code=${res.code}): ` +
-          `${res.stderr.trim().slice(-200)}`,
+        `fleet_migrate_box_image: ${running ? 'run' : 'create'} of ${containerName} failed ` +
+          `(code=${res.code}): ${res.stderr.trim().slice(-200)}`,
       );
       return;
     }
     log.info(
       'host-agent',
-      `fleet_migrate_box_image: ${containerName} re-pointed at :latest (still stopped)`,
+      running
+        ? `fleet_migrate_box_image: ${containerName} was idle — restarted on :latest (same volume)`
+        : `fleet_migrate_box_image: ${containerName} re-pointed at :latest (still stopped)`,
     );
   }
 

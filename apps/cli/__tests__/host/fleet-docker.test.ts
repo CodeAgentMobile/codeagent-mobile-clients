@@ -1,6 +1,12 @@
+import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildFleetBoxMigrateArgs,
+  buildFleetBoxRecreateArgs,
+  FLEET_BOX_TURNS_PROBE,
   buildFleetBoxRunArgs,
   defaultDockerRunner,
   fleetLaneKey,
@@ -190,5 +196,43 @@ describe('fleet-docker', () => {
         run.filter((a) => !['run', '-d', '--pull=always'].includes(a)),
       );
     });
+  });
+
+  describe('running-box recreate (restartIfIdle)', () => {
+    it('recreate = the full run template without the inline pull (token stays a bare -e)', () => {
+      const run = buildFleetBoxRunArgs({ ...BOX, limits: LIMITS });
+      const recreate = buildFleetBoxRecreateArgs({ ...BOX, limits: LIMITS });
+      expect(recreate).toEqual(run.filter((a) => a !== '--pull=always'));
+      expect(recreate[0]).toBe('run');
+      expect(recreate).toContain('CODEAM_ENROLL_TOKEN');
+      expect(recreate.some((a) => a.startsWith('CODEAM_ENROLL_TOKEN='))).toBe(false);
+    });
+
+    it('the payload guard accepts restartIfIdle as a boolean only', () => {
+      const base = { ...BOX, limits: LIMITS };
+      expect(isFleetMigrateBoxImagePayload({ ...base, restartIfIdle: true })).toBe(true);
+      expect(isFleetMigrateBoxImagePayload({ ...base, restartIfIdle: 'yes' })).toBe(false);
+    });
+
+    it.skipIf(process.platform === 'win32')(
+      'the turns probe prints only markers whose pid is alive',
+      () => {
+        const home = fs.mkdtempSync(path.join(os.tmpdir(), 'turns-probe-'));
+        const dir = path.join(home, '.codeam', 'turns');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, String(process.pid)), '1');
+        fs.writeFileSync(path.join(dir, '999999999'), '1'); // a session killed mid-turn
+        const script = FLEET_BOX_TURNS_PROBE[2].replace('/home/box', home);
+        // macOS has no /proc: the dead pid is still filtered, the live one only on Linux.
+        const out = execFileSync('sh', ['-c', script], { encoding: 'utf8' }).trim();
+        expect(out.split('\n').filter(Boolean)).toEqual(
+          fs.existsSync('/proc/self') ? [String(process.pid)] : [],
+        );
+        expect(execFileSync('sh', ['-c', FLEET_BOX_TURNS_PROBE[2].replace('/home/box', '/nonexistent')], {
+          encoding: 'utf8',
+        })).toBe('');
+        fs.rmSync(home, { recursive: true, force: true });
+      },
+    );
   });
 });
