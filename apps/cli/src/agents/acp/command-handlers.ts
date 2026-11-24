@@ -126,6 +126,7 @@ import {
 } from './remix-context';
 import { currentAgentEnv } from '../current-agent-env';
 import { reportCredentialInvalid } from './backend-reports';
+import { activeClaudeLease } from '../claude/credential-lease';
 import type { AcpHistory, AcpRunnerOptions, StreamingState } from './runner';
 
 /**
@@ -622,6 +623,21 @@ function applySquadContext(
  * see the array the agent actually received.
  */
 async function promptWithContextFallback(
+  ctx: AcpCommandContext,
+  client: AcpClient,
+  blocks: PromptBlock[],
+  pieces: readonly string[],
+): Promise<PromptResponse> {
+  // Real Claude on a cloud box: lease a credential valid for the next hour
+  // BEFORE the agent runs, and keep doing so on its activity until the turn
+  // ends, so its own refresh never spends the single-use token (codeagent-3570).
+  const lease =
+    ctx.opts.agent === 'claude' && !(ctx.currentIsHouse?.() ?? false) ? activeClaudeLease() : null;
+  if (lease) return lease.duringTurn(() => promptOnce(ctx, client, blocks, pieces));
+  return promptOnce(ctx, client, blocks, pieces);
+}
+
+async function promptOnce(
   ctx: AcpCommandContext,
   client: AcpClient,
   blocks: PromptBlock[],

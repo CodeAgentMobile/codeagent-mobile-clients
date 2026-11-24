@@ -717,6 +717,13 @@ export async function fetchProvisionCredentialDetailed(input: {
    * ignore the flag and simply omit `installScript`.
    */
   includeInstallScript?: boolean;
+  /**
+   * Lease: ask for an OAuth credential whose access token is valid at least
+   * this long. The backend refreshes (under its per-user lock) when the vaulted
+   * one is closer to expiry — so a running box never rotates Claude's
+   * single-use refresh token itself (codeagent-3570). Older backends ignore it.
+   */
+  minValidityMs?: number;
 }): Promise<ProvisionCredentialResult> {
   try {
     const res = await _transport.postJsonAuthed(
@@ -725,6 +732,7 @@ export async function fetchProvisionCredentialDetailed(input: {
         sessionId: input.sessionId,
         pluginId: input.pluginId,
         ...(input.includeInstallScript ? { includeInstallScript: true } : {}),
+        ...(input.minValidityMs !== undefined ? { minValidityMs: input.minValidityMs } : {}),
       },
       input.pluginAuthToken,
     );
