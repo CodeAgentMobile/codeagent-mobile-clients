@@ -184,6 +184,13 @@ describe('app-server proxy — the dev server sees a same-origin request as its 
     );
     expect(devRequestHeaders({ host: 'p.example.com' }, 8081).origin).toBeUndefined();
   });
+  it('rewrites the loopback Origin a proxy in front already set for this hop (Expo inspector)', () => {
+    const h = devRequestHeaders(
+      { host: 'localhost:5001', origin: 'http://localhost:5001', 'x-forwarded-host': 'p.example.com' },
+      8081,
+    );
+    expect(h).toMatchObject({ host: 'localhost:8081', origin: 'http://localhost:8081' });
+  });
 });
 
 describe('app-server proxy — live', () => {

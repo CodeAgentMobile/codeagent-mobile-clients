@@ -109,7 +109,13 @@ export function devRequestHeaders(
 ): http.OutgoingHttpHeaders {
   const out = upstreamRequestHeaders(headers, devPort);
   const origin = one(headers.origin);
-  if (origin && origin === publicOriginOf(headers)) out.origin = `http://localhost:${devPort}`;
+  // Same-origin = the public origin, OR this hop's own loopback host: the inspector proxy in front
+  // already rewrote it to `http://localhost:<our port>` (Expo web preview: tunnel → inspector →
+  // this proxy → Metro).
+  const host = one(headers.host);
+  if (origin && (origin === publicOriginOf(headers) || (host && origin === `http://${host}`))) {
+    out.origin = `http://localhost:${devPort}`;
+  }
   return out;
 }
 

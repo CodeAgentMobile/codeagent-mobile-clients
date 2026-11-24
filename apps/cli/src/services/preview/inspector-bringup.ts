@@ -1,4 +1,4 @@
-import { startInspectorProxy, type InspectorProxy } from './inspector-proxy';
+import { startInspectorProxy, type InspectorProxy, type InspectorProxyOptions } from './inspector-proxy';
 import { inspectorClientSource } from './inspector-client';
 
 /**
@@ -52,6 +52,8 @@ export interface BringUpInspectorDeps {
   start?: typeof startInspectorProxy;
   /** The loopback the dev server bound (`::1` for an IPv6-only Vite). */
   targetHost?: string;
+  /** See `InspectorProxyOptions.upstreamHeaders` (Expo's Origin rewrite). */
+  upstreamHeaders?: InspectorProxyOptions['upstreamHeaders'];
   log?: (message: string) => void;
   env?: NodeJS.ProcessEnv;
 }
@@ -84,6 +86,7 @@ export async function bringUpInspector(
     const proxy = await start({
       targetPort,
       ...(deps.targetHost ? { targetHost: deps.targetHost } : {}),
+      ...(deps.upstreamHeaders ? { upstreamHeaders: deps.upstreamHeaders } : {}),
       script: inspectorClientSource({ allowedOrigins: resolveInspectorOrigins(env) }),
     });
     log(`preview inspector proxy on :${proxy.port} → ${deps.targetHost ?? '127.0.0.1'}:${targetPort}`);
